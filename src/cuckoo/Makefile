@@ -1,8 +1,8 @@
 .POSIX:
 .SUFFIXES:
 
-#OPT ?= -O3
-OPT ?= -g
+OPT ?= -O2
+#OPT ?= -g
 
 GCC_ARCH_FLAGS ?= -march=native
 GPP_ARCH_FLAGS ?= -march=native
@@ -38,7 +38,7 @@ verify19:	../crypto/siphash.hpp cuckoo.h verify.c Makefile
 	$(GPP) -o $@ -DPROOFSIZE=42 -DEDGEBITS=19 verify.c $(BLAKE_2B_SRC)
 
 simple29:	../crypto/siphash.hpp cuckoo.h cyclebase.hpp simple.cpp Makefile
-	$(GPP) -o $@ -DIDXSHIFT=0 -DPROOFSIZE=42 -DEDGEBITS=29 simple.cpp $(BLAKE_2B_SRC)
+	$(GPP) -o $@ -DIDXSHIFT=0 -DPROOFSIZE=42 -DEDGEBITS=29 simple.cpp cyclebase.cpp cuckoo.c $(BLAKE_2B_SRC) $(SIPHASH_SRC)
 
 lean19x1:	../crypto/siphash.hpp cuckoo.h  lean.hpp lean.cpp Makefile
 	$(GPP) -o $@ -DATOMIC -DNSIPHASH=1 -DEDGEBITS=19 lean.cpp $(BLAKE_2B_SRC)

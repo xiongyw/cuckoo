@@ -1,21 +1,11 @@
-// Cuckoo Cycle, a memory-hard proof-of-work
-// Copyright (c) 2013-2016 John Tromp
-
-#include "cuckoo.h"
-
-#if (0)
-// assume EDGEBITS < 31
-#define NNODES (2 * NEDGES)
-#define NCUCKOO NNODES
-#endif
-
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <unistd.h>
 #include "cyclebase.hpp"
 #include <set>
+
+#include "cuckoo.h"
 
 typedef unsigned char u8;
 
@@ -35,7 +25,7 @@ public:
     cb.freemem();
   }
 
-  word_t bytes() {
+  uint64_t bytes() {
     return (word_t)(1+NNODES) * sizeof(word_t);
   }
 
@@ -96,7 +86,7 @@ int main(int argc, char **argv) {
   printf(") with %d%% edges, ", easipct);
   word_t easiness = easipct * (word_t)NNODES / 100;
   cuckoo_ctx ctx(header, sizeof(header), nonce, easiness);
-  word_t bytes = ctx.bytes();
+  uint64_t bytes = ctx.bytes();
   int unit;
   for (unit=0; bytes >= 10240; bytes>>=10,unit++) ;
   printf("using %d%cB memory at %llx.\n", bytes, " KMGT"[unit], (uint64_t)ctx.cb.cuckoo);
@@ -104,9 +94,9 @@ int main(int argc, char **argv) {
   for (u32 r = 0; r < range; r++) {
     time0 = timestamp();
     ctx.setheadernonce(header, sizeof(header), nonce + r);
-    printf("nonce %d k0 k1 k2 k3 %llx %llx %llx %llx\n", nonce+r, ctx.sip_keys.k0, ctx.sip_keys.k1, ctx.sip_keys.k2, ctx.sip_keys.k3);
+    printf("macro nonce %d: k0 k1 k2 k3 %llx %llx %llx %llx\n", nonce+r, ctx.sip_keys.k0, ctx.sip_keys.k1, ctx.sip_keys.k2, ctx.sip_keys.k3);
     ctx.cycle_base();
-    ctx.cb.cycles();
+    //ctx.cb.cycles();
     time1 = timestamp(); timems = (time1 - time0) / 1000000;
     printf("Time: %d ms\n", timems);
   }

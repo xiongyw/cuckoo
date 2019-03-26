@@ -55,7 +55,7 @@ struct cyclebase {
   int path(u32 u0, u32 *us) const;
 
   // return the number of extra common nodes (except the last one) of the two pathes
-  int pathjoin(u32 *us, int *pnu, u32 *vs, int *pnv) ;
+  int pathjoin(u32 *us, int *pnu, u32 *vs, int *pnv) const;
 
   void addedge(u32 u0, u32 v0) ;
 
