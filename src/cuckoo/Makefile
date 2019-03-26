@@ -1,7 +1,8 @@
 .POSIX:
 .SUFFIXES:
 
-OPT ?= -O3
+#OPT ?= -O3
+OPT ?= -g
 
 GCC_ARCH_FLAGS ?= -march=native
 GPP_ARCH_FLAGS ?= -march=native
@@ -12,6 +13,8 @@ GPP ?= g++ $(GPP_ARCH_FLAGS) -std=c++11 $(FLAGS)
 CFLAGS ?= -Wall -Wno-format -fomit-frame-pointer $(OPT)
 GCC ?= gcc $(GCC_ARCH_FLAGS) -std=gnu11 $(CFLAGS)
 BLAKE_2B_SRC ?= ../crypto/blake2b-ref.c
+SIPHASH_SRC = ../crypto/siphash.cpp
+
 NVCC ?= nvcc -std=c++11 
 
 all : simpletest leantest meantest
@@ -28,11 +31,11 @@ meantest:	mean29x4
 verifytest:     lean19x1 verify19
 	./lean19x1 -n 38 | grep ^Sol | ./verify19 -n 38
 
-simple19:	../crypto/siphash.hpp cuckoo.h cyclebase.hpp simple.cpp Makefile
-	$(GPP) -o $@ -DIDXSHIFT=0 -DPROOFSIZE=42 -DEDGEBITS=19 simple.cpp $(BLAKE_2B_SRC)
+simple19:	../crypto/siphash.hpp cuckoo.h cyclebase.cpp cyclebase.hpp simple.cpp Makefile
+	$(GPP) -o $@ -DIDXSHIFT=0 -DPROOFSIZE=42 -DEDGEBITS=19 simple.cpp cyclebase.cpp cuckoo.c $(BLAKE_2B_SRC) $(SIPHASH_SRC)
 
-verify19:	../crypto/siphash.hpp cuckoo.h cuckoo.c simple.cpp Makefile
-	$(GPP) -o $@ -DPROOFSIZE=42 -DEDGEBITS=19 cuckoo.c $(BLAKE_2B_SRC)
+verify19:	../crypto/siphash.hpp cuckoo.h verify.c Makefile
+	$(GPP) -o $@ -DPROOFSIZE=42 -DEDGEBITS=19 verify.c $(BLAKE_2B_SRC)
 
 simple29:	../crypto/siphash.hpp cuckoo.h cyclebase.hpp simple.cpp Makefile
 	$(GPP) -o $@ -DIDXSHIFT=0 -DPROOFSIZE=42 -DEDGEBITS=29 simple.cpp $(BLAKE_2B_SRC)

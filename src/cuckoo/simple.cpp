@@ -3,9 +3,11 @@
 
 #include "cuckoo.h"
 
+#if (0)
 // assume EDGEBITS < 31
 #define NNODES (2 * NEDGES)
 #define NCUCKOO NNODES
+#endif
 
 
 #include <stdio.h>
@@ -20,7 +22,7 @@ typedef unsigned char u8;
 class cuckoo_ctx {
 public:
   siphash_keys sip_keys;
-  word_t easiness;
+  word_t easiness; // number of edges (micro nonces)
   cyclebase cb;
 
   cuckoo_ctx(const char* header, const u32 headerlen, const u32 nonce, word_t easy_ness) {
@@ -47,6 +49,7 @@ public:
     for (word_t nonce = 0; nonce < easiness; nonce++) {
       word_t u = sipnode(&sip_keys, nonce, 0);
       word_t v = sipnode(&sip_keys, nonce, 1);
+      //printf("%s(): u=%d, v=%d\n", __FUNCTION__, u, v);
   #ifdef SHOW
       for (unsigned j=1; j<NNODES; j++)
         if (!cb.cuckoo[j]) printf("%2d:   ",j);
@@ -65,7 +68,7 @@ int main(int argc, char **argv) {
   char header[HEADERLEN];
   memset(header, 0, HEADERLEN);
   int c, easipct = 50;
-  u32 nonce = 0;
+  u32 nonce = 0;  // macro nonce
   u32 range = 1;
   u64 time0, time1;
   u32 timems;
@@ -87,7 +90,7 @@ int main(int argc, char **argv) {
     }
   }
   assert(easipct >= 0 && easipct <= 100);
-  printf("Looking for %d-cycle on cuckoo%d(\"%s\",%d", PROOFSIZE, EDGEBITS+1, header, nonce);
+  printf("Looking for %d-cycle on cuckoo%d(header=\"%s\",nonce=%d", PROOFSIZE, EDGEBITS+1, header, nonce);
   if (range > 1)
     printf("-%d", nonce+range-1);
   printf(") with %d%% edges, ", easipct);

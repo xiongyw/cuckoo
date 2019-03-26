@@ -3,6 +3,7 @@
 #include <stdint.h>    // for types uint32_t,uint64_t
 #include "portable_endian.h"    // for htole32/64
 
+
 // generalize siphash by using a quadruple of 64-bit keys,
 class siphash_keys {
 public:
@@ -12,10 +13,8 @@ public:
   uint64_t k3;
 
   void setkeys(const char *keybuf);
-
   uint64_t siphash24(const uint64_t nonce) const;
 };
-
 class siphash_state {
 public:
   uint64_t v0;
@@ -53,7 +52,8 @@ public:
     sip_round(); sip_round(); sip_round(); sip_round();
   }
 };
- 
+
+#if (0)
 // set siphash keys from 32 byte char array
 void siphash_keys::setkeys(const char *keybuf) {
   k0 = htole64(((uint64_t *)keybuf)[0]);
@@ -67,3 +67,7 @@ uint64_t siphash_keys::siphash24(const uint64_t nonce) const {
   v.hash24(nonce);
   return v.xor_lanes();
 }
+#endif
+
+
+
