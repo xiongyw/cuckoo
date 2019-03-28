@@ -26,16 +26,18 @@
 // XBITS 'X' bits (most significant), YBITS 'Y' bits, and ZBITS 'Z' bits (least significant)
 // Here we have the default XBITS=YBITS=7, ZBITS=15 summing to EDGEBITS=29
 // nodebits   XXXXXXX YYYYYYY ZZZZZZZZZZZZZZZ
-// bit%10     8765432 1098765 432109876543210
 // bit/10     2222222 2211111 111110000000000
+// bit%10     8765432 1098765 432109876543210
 
 // The matrix solver stores all edges in a matrix of NX * NX buckets,
 // where NX = 2^XBITS is the number of possible values of the 'X' bits.
 // Edge i between nodes ui = siphash24(2*i) and vi = siphash24(2*i+1)
 // resides in the bucket at (uiX,viX)
+
 // In each trimming round, either a matrix row or a matrix column (NX buckets)
 // is bucket sorted on uY or vY respectively, and then within each bucket
 // uZ or vZ values are counted and edges with a count of only one are eliminated,
+
 // while remaining edges are bucket sorted back on vX or uX respectively.
 // When sufficiently many edges have been eliminated, a pair of compression
 // rounds remap surviving Y,Z values in each row or column into 15 bit
@@ -49,6 +51,11 @@
 #endif
 
 #define YBITS XBITS
+
+/*
+ * big bucket and small bucket?
+ *
+ */
 
 // size in bytes of a big bucket entry
 #ifndef BIGSIZE
@@ -156,9 +163,9 @@ const u32 ZBUCKETSLOTS = NZ + NZ * BIGEPS;
 #ifdef SAVEEDGES
 const u32 ZBUCKETSIZE = NTRIMMEDZ * (BIGSIZE + sizeof(u32));  // assumes EDGEBITS <= 32
 #else
-const u32 ZBUCKETSIZE = ZBUCKETSLOTS * BIGSIZE0; 
+const u32 ZBUCKETSIZE = ZBUCKETSLOTS * BIGSIZE0;
 #endif
-const u32 TBUCKETSIZE = ZBUCKETSLOTS * BIGSIZE; 
+const u32 TBUCKETSIZE = ZBUCKETSLOTS * BIGSIZE;
 
 template<u32 BUCKETSIZE>
 struct zbucket {
@@ -306,7 +313,7 @@ public:
 #ifdef NEEDSYNC
     u32 last[NX];;
 #endif
-  
+
     rdtsc0 = __rdtsc();
     u8 const *base = (u8 *)buckets;
     indexer<ZBUCKETSIZE> dst;
@@ -500,7 +507,7 @@ public:
     const u32 NONDEGMASK = (1 << NONDEGBITS) - 1;
     indexer<ZBUCKETSIZE> dst;
     indexer<TBUCKETSIZE> small;
-  
+
     rdtsc0 = __rdtsc();
     offset_t sumsize = 0;
     u8 const *base = (u8 *)buckets;
@@ -628,7 +635,7 @@ public:
           SIPROUNDX2N; SIPROUNDX2N; SIPROUNDX2N; SIPROUNDX2N;
           v0 = XOR(XOR(v0,v1),XOR(v2,v3));
           v4 = XOR(XOR(v4,v5),XOR(v6,v7));
-    
+
           v1 = _mm256_srli_epi64(v0, YZBITS) & vxmask;
           v5 = _mm256_srli_epi64(v4, YZBITS) & vxmask;
           v0 = vhi0 | (v0 & vyzmask);
@@ -675,7 +682,7 @@ public:
     u64 rdtsc0, rdtsc1;
     indexer<ZBUCKETSIZE> dst;
     indexer<TBUCKETSIZE> small;
-  
+
     rdtsc0 = __rdtsc();
     offset_t sumsize = 0;
     u8 const *base = (u8 *)buckets;
@@ -752,7 +759,7 @@ public:
     indexer<ZBUCKETSIZE> dst;
     indexer<TBUCKETSIZE> small;
     u32 maxnnid = 0;
-  
+
     rdtsc0 = __rdtsc();
     offset_t sumsize = 0;
     u8 const *base = (u8 *)buckets;
@@ -850,7 +857,7 @@ public:
   void trimedges1(const u32 id, const u32 round) {
     u64 rdtsc0, rdtsc1;
     indexer<ZBUCKETSIZE> dst;
-  
+
     rdtsc0 = __rdtsc();
     offset_t sumsize = 0;
     u8 *degs = tdegs[id];
@@ -895,7 +902,7 @@ public:
     u64 rdtsc0, rdtsc1;
     indexer<ZBUCKETSIZE> dst;
     u32 maxnnid = 0;
-  
+
     rdtsc0 = __rdtsc();
     offset_t sumsize = 0;
     u16 *degs = (u16 *)tdegs[id];
@@ -1144,11 +1151,11 @@ public:
     }
     return nu-1;
   }
-  
+
   void findcycles() {
     u32 us[MAXPATHLEN], vs[MAXPATHLEN];
     u64 rdtsc0, rdtsc1;
-  
+
     rdtsc0 = __rdtsc();
     for (u32 vx = 0; vx < NX; vx++) {
       for (u32 ux = 0 ; ux < NX; ux++) {
@@ -1200,7 +1207,7 @@ public:
 
   void *matchUnodes(match_ctx *mc) {
     u64 rdtsc0, rdtsc1;
-  
+
     rdtsc0 = __rdtsc();
     const u32 starty = NY *  mc->id    / trimmer->nthreads;
     const u32   endy = NY * (mc->id+1) / trimmer->nthreads;
@@ -1286,14 +1293,14 @@ public:
         SIPROUNDX2N; SIPROUNDX2N; SIPROUNDX2N; SIPROUNDX2N;
         v0 = XOR(XOR(v0,v1),XOR(v2,v3));
         v4 = XOR(XOR(v4,v5),XOR(v6,v7));
-  
+
         vpacket0 = _mm256_add_epi64(vpacket0, vpacketinc);
         vpacket1 = _mm256_add_epi64(vpacket1, vpacketinc);
         v0 = v0 & vnodemask;
         v4 = v4 & vnodemask;
         v1 = _mm256_srli_epi64(v0, ZBITS);
         v5 = _mm256_srli_epi64(v4, ZBITS);
-  
+
         u32 uxy;
   #define MATCH(i,v,x,w) \
   uxy = _mm256_extract_epi32(v,x);\

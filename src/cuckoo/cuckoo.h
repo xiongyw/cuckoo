@@ -8,8 +8,10 @@
 #include <string.h> // for functions strlen, memset
 #include <stdarg.h>
 #include <stdio.h>
+#ifndef __NVCC__
 #include <chrono>
 #include <ctime>
+#endif // __NVCC__
 #include "../crypto/blake2.h"
 #include "../crypto/siphash.hpp"
 
@@ -119,8 +121,10 @@ struct SolverStats {
 enum verify_code { POW_OK, POW_HEADER_LENGTH, POW_TOO_BIG, POW_TOO_SMALL, POW_NON_MATCHING, POW_BRANCH, POW_DEAD_END, POW_SHORT_CYCLE};
 extern const char *errstr[];
 
+#ifndef __NVCC__
 // generate edge endpoint in cuckoo graph without partition bit
 word_t sipnode(siphash_keys *keys, word_t edge, u32 uorv);
+#endif
 // verify that edges are ascending and form a cycle in header-generated graph
 int verify(word_t edges[PROOFSIZE], siphash_keys *keys) ;
 // convenience function for extracting siphash keys from header

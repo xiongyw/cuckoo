@@ -16,6 +16,7 @@
 
 typedef uint64_t u64; // save some typing
 
+// atomic access to nodes' degree counter when parallelizing edge-trimming
 #ifdef ATOMIC
 #include <atomic>
 typedef std::atomic<u32> au32;
@@ -49,7 +50,7 @@ const u32 NODEBITS = EDGEBITS + 1;
 const word_t NODEMASK = (EDGEMASK << 1) | (word_t)1;
 
 #ifndef PART_BITS
-// #bits used to partition edge set processing to save memory
+// #bits used to partition "edge set processing" to save memory
 // a value of 0 does no partitioning and is fastest
 // a value of 1 partitions in two, making twice_set the
 // same size as shrinkingset at about 33% slowdown
@@ -77,11 +78,18 @@ const word_t NODEMASK = (EDGEMASK << 1) | (word_t)1;
 const u32 MAXPATHLEN = 8 << (NODEBITS/3);
 
 const u32 PART_MASK = (1 << PART_BITS) - 1;
+// number of nodes in one partition
 const u64 ONCE_BITS = NEDGES >> PART_BITS;
+// counter storage size (in bytes) for one partition
 const u64 TWICE_BYTES = (2 * ONCE_BITS) / 8;
+// counter storage size (in atwice) for one partition
 const u64 TWICE_ATOMS = TWICE_BYTES / sizeof(atwice);
+// number of node counters per atomic access: 1 byte (8-bit) can store degree count for 4 nodes, as each node uses 2 bits
 const u32 TWICE_PER_ATOM = sizeof(atwice) * 4;
 
+// twice_set class is used to store nodes' degree capping at 2. to increase
+// the degree of a node, call set() once, and the degree will not increase
+// anymore (capped) after two set() calls.
 class twice_set {
 public:
   atwice *bits;
@@ -100,17 +108,24 @@ public:
     __builtin_prefetch((const void *)(&bits[u/TWICE_PER_ATOM]), /*READ=*/0, /*TEMPORAL=*/0);
 #endif
   }
+
   void set(word_t u) {
-    word_t idx = u/TWICE_PER_ATOM;
+    word_t idx = u/TWICE_PER_ATOM; // ATOM idx where the 2-bit resides
     uatwice bit = (uatwice)1 << (2 * (u%TWICE_PER_ATOM));
 #ifdef ATOMIC
     uatwice old = std::atomic_fetch_or_explicit(&bits[idx], bit, std::memory_order_relaxed);
     if (old & bit) std::atomic_fetch_or_explicit(&bits[idx], bit<<1, std::memory_order_relaxed);
 #else
     uatwice old = bits[idx];
+    // suppose that bit=2'b01(u%TWICE_PER_ATOM==0), old=2'b00, then
+    // 1st set: 00 | (01 + (00 & 01)) --> old = 01
+    // 2nd set: 01 | (01 + (01 & 01)) --> old = 11
+    // 3rd set: 11 | (01 + (11 & 01)) --> old = 11
     bits[idx] = old | (bit + (old & bit));
 #endif
   }
+
+  // return true if the node degree >=2; otherwise false
   bool test(word_t u) const {
 #ifdef ATOMIC
     return ((bits[u/TWICE_PER_ATOM].load(std::memory_order_relaxed)
@@ -119,6 +134,7 @@ public:
     return (bits[u/TWICE_PER_ATOM] >> (2 * (u%TWICE_PER_ATOM)) & 2) != 0;
 #endif
   }
+
   ~twice_set() {
     delete[] bits;
   }
@@ -127,37 +143,60 @@ public:
 // set that starts out full and gets reset by threads on disjoint words
 class shrinkingset {
 public:
-  u64 *bits;
-  u64 *cnt;
+  u64 *bits;  // edge bit map, one bit per edge, 0 for alive, 1 for dead. a block contains 64 edge.
+  u64 *cnt;   // one live-edge count per thread
   u32 nthreads;
 
+  /**
+   * better to use a variable for NEDGES, e.g. constructor(ne, nt)
+   * - nt: number of threads
+   */
   shrinkingset(const u32 nt) {
-    bits = (u64 *)malloc(NEDGES/8);
+    bits = (u64 *)malloc(NEDGES/8);  // better to use a varaible for NEDGES
     cnt  = (u64 *)malloc(nt * sizeof(u64));
     nthreads = nt;
   }
+
   ~shrinkingset() {
     free(bits);
     free(cnt);
   }
+
+  // set all edges to be live
   void clear() {
     memset(bits, 0, NEDGES/8);
     memset(cnt, 0, nthreads * sizeof(u64));
     cnt[0] = NEDGES;
   }
+
+  // total number of live edges
   u64 count() const {
     u64 sum = 0LL;
     for (u32 i=0; i<nthreads; i++)
       sum += cnt[i];
     return sum;
   }
+
+  /**
+   * kill an edge
+   * - n: edge index
+   * - thread: the thread idx corresponding to the edge
+   */
   void reset(word_t n, u32 thread) {
     bits[n/64] |= 1LL << (n%64);
     cnt[thread]--;
   }
+
+  /**
+   * return liveness an edge (by its idx)
+   * return 1 if alive; otherwise dead
+   */
   bool test(word_t n) const {
     return !((bits[n/64] >> (n%64)) & 1LL);
   }
+
+  // return liveness of a block which contains the edge idx n
+  // note that the liveness meaning is changed (why?)
   u64 block(word_t n) const {
     return ~bits[n/64];
   }
@@ -179,6 +218,7 @@ public:
     for (u32 i=0; i < CUCKOO_SIZE; i++)
       cuckoo[i] = 0;
   }
+
   void set(word_t u, word_t v) {
     u64 niew = (u64)u << NODEBITS | v;
     for (word_t ui = u >> IDXSHIFT; ; ui = (ui+1) & CUCKOO_MASK) {
@@ -199,6 +239,7 @@ public:
 #endif
     }
   }
+
   word_t operator[](word_t u) const {
     for (word_t ui = u >> IDXSHIFT; ; ui = (ui+1) & CUCKOO_MASK) {
 #if !defined(SINGLECYCLING) && defined(ATOMIC)
@@ -240,6 +281,7 @@ public:
     assert(sols != 0);
     nsols = 0;
   }
+
   void setheadernonce(char* headernonce, const u32 len, const u32 nce) {
     nonce = nce;
     ((u32 *)headernonce)[len/sizeof(u32)-1] = htole32(nonce); // place nonce at end
@@ -247,17 +289,22 @@ public:
     alive->clear(); // set all edges to be alive
     nsols = 0;
   }
+
   ~cuckoo_ctx() {
     delete alive;
     delete nonleaf;
     delete cuckoo;
   }
+
   void barrier() {
     barry.wait();
   }
+
   void abort() {
     barry.abort();
   }
+
+  //
   void prefetch(const u64 *hashes, const u32 part) const {
     for (u32 i=0; i < NSIPHASH; i++) {
       u32 u = hashes[i] & EDGEMASK;
@@ -266,6 +313,13 @@ public:
       }
     }
   }
+
+  /**
+   * capping-increase the degree of a bunch of nodes
+   * - hashes[]: array storing the H(key, 2i) or H(key, 2i+1)
+   * - nsiphash: number of hashes in the array above
+   * - part: partition index the nodes belong to
+   */
   void node_deg(const u64 *hashes, const u32 nsiphash, const u32 part) const {
     for (u32 i=0; i < nsiphash; i++) {
 #ifdef SKIPZERO
@@ -278,26 +332,41 @@ public:
       }
     }
   }
+
+  // update nodes' degree by thread `id` for `uorv` round on partition `part`
+  // - id: thread idx
+  // - uorv: even or odd round
+  // - part: partition idx
   void count_node_deg(const u32 id, const u32 uorv, const u32 part) {
     alignas(64) u64 indices[NSIPHASH];
     alignas(64) u64 hashes[NPREFETCH];
-  
+
     memset(hashes, 0, NPREFETCH * sizeof(u64)); // allow many nonleaf->set(0) to reduce branching
     u32 nidx = 0;
-    for (word_t block = id*64; block < NEDGES; block += nthreads*64) {
-      u64 alive64 = alive->block(block);
-      for (word_t nonce = block-1; alive64; ) { // -1 compensates for 1-based ffs
-        u32 ffs = __builtin_ffsll(alive64);
-        nonce += ffs; alive64 >>= ffs;
-        indices[nidx++ % NSIPHASH] = 2*nonce + uorv;
-        if (nidx % NSIPHASH == 0) {
-          node_deg(hashes+nidx-NSIPHASH, NSIPHASH, part);
-          siphash24xN(&sip_keys, indices, hashes+nidx-NSIPHASH);
-          prefetch(hashes+nidx-NSIPHASH, part);
-          nidx %= NPREFETCH;
+    // "To maintain efficient access to the bitmap of live edges, each thread
+    // handles words spaced T apart."
+    // a block is hard-coded as 64 bits (edges), and each thread handles block by block. e.g., suppose there
+    // are totally 4 threads, then:
+    // block  id: 0 1 2 3  4 5 6 7   8 9 10 11 ...
+    // thread id: 0 1 2 3  0 1 2 3   0 1  2  3
+    for (word_t edge_idx = id*64; edge_idx < NEDGES; edge_idx += nthreads*64) {
+        u64 alive64 = alive->block(edge_idx);
+        word_t nonce; // micro nonce (i.e., edge idx)
+        for (nonce = edge_idx-1; alive64; ) { // -1 compensates for 1-based ffs
+            u32 ffs = __builtin_ffsll(alive64);  // find first bit set, `man ffs`
+            nonce += ffs;
+            alive64 >>= ffs;
+            indices[nidx++ % NSIPHASH] = 2*nonce + uorv;
+            if (nidx % NSIPHASH == 0) {
+                node_deg(hashes+nidx-NSIPHASH, NSIPHASH, part);
+                // get N hashes into hashes[] at once
+                siphash24xN(&sip_keys, indices, hashes+nidx-NSIPHASH);
+
+                prefetch(hashes+nidx-NSIPHASH, part);
+                nidx %= NPREFETCH;
+            }
+            if (ffs & 64) break; // can't shift by 64
         }
-        if (ffs & 64) break; // can't shift by 64
-      }
     }
     node_deg(hashes, NPREFETCH, part);
     if (nidx % NSIPHASH != 0) {
@@ -305,6 +374,8 @@ public:
       node_deg(hashes+(nidx&-NSIPHASH), nidx%NSIPHASH, part);
     }
   }
+
+  //
   void kill(const u64 *hashes, const u64 *indices, const u32 nsiphash,
              const u32 part, const u32 id) const {
     for (u32 i=0; i < nsiphash; i++) {
@@ -318,10 +389,12 @@ public:
       }
     }
   }
+
+  //
   void kill_leaf_edges(const u32 id, const u32 uorv, const u32 part) {
     alignas(64) u64 indices[NPREFETCH];
     alignas(64) u64 hashes[NPREFETCH];
-  
+
     memset(hashes, 0, NPREFETCH * sizeof(u64)); // allow many nonleaf->test(0) to reduce branching
     u32 nidx = 0;
     for (word_t block = id*64; block < NEDGES; block += nthreads*64) {
@@ -347,6 +420,8 @@ public:
     const u32 nnsip = pnsip + NSIPHASH;
     kill(hashes+nnsip, indices+nnsip, NPREFETCH-nnsip, part, id);
   }
+
+  //
   void solution(word_t *us, u32 nu, word_t *vs, u32 nv) {
     typedef std::pair<word_t,word_t> edge;
     std::set<edge> cycle;
@@ -383,9 +458,9 @@ public:
 };
 
 typedef struct {
-  u32 id;
+  u32 id;  // thread idx
+  cuckoo_ctx *ctx;  // the ctx this thread belongs to
   pthread_t thread;
-  cuckoo_ctx *ctx;
 } thread_ctx;
 
 u32 path(cuckoo_hash &cuckoo, word_t u, word_t *us) {
@@ -403,6 +478,7 @@ u32 path(cuckoo_hash &cuckoo, word_t u, word_t *us) {
   return nu-1;
 }
 
+// vp is thread_ctx*
 void *worker(void *vp) {
   thread_ctx *tp = (thread_ctx *)vp;
   cuckoo_ctx *ctx = tp->ctx;
@@ -412,14 +488,21 @@ void *worker(void *vp) {
   for (u32 round=0; round < ctx->ntrims; round++) {
     // if (tp->id == 0) printf("round %2d partition sizes", round);
     for (u32 part = 0; part <= PART_MASK; part++) {
-      if (tp->id == 0)
-        ctx->nonleaf->clear(); // clear all counts
-      ctx->barrier();
-      ctx->count_node_deg(tp->id,round&1,part);
-      ctx->barrier();
-      ctx->kill_leaf_edges(tp->id,round&1,part);
-      ctx->barrier();
-      // if (tp->id == 0) printf(" %c%d %d", "UV"[round&1], part, alive->count());
+        // step 1: clear all counts: only let the 1st thread do this
+        if (tp->id == 0) {
+            ctx->nonleaf->clear(); // clear all counts
+        }
+        ctx->barrier();
+
+        // step 2: each thread visit its lives edges, but can
+        // update degree of any node (thus requires atomic operation)
+        ctx->count_node_deg(tp->id,round&1,part);
+        ctx->barrier();
+
+        // step 3: each thread kill its edges, by refering the global nodes degree counters
+        ctx->kill_leaf_edges(tp->id,round&1,part);
+        ctx->barrier();
+        // if (tp->id == 0) printf(" %c%d %d", "UV"[round&1], part, alive->count());
     }
     // if (tp->id == 0) printf("\n");
   }

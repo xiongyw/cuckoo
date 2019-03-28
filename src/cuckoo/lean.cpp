@@ -50,38 +50,58 @@ int main(int argc, char **argv) {
         break;
     }
   }
-  printf("Looking for %d-cycle on cuckoo%d(\"%s\",%d", PROOFSIZE, EDGEBITS+1, header, nonce);
+  printf("Looking for %d-cycle on cuckoo%d(header=\"%s\",nonce=%d", PROOFSIZE, EDGEBITS+1, header, nonce);
   if (range > 1)
     printf("-%d", nonce+range-1);
   printf(") with 50%% edges, %d trims, %d threads\n", ntrims, nthreads);
 
-  u64 edgeBytes = NEDGES/8, nodeBytes = TWICE_ATOMS*sizeof(atwice);
+  /*
+     const u32 PART_MASK = (1 << PART_BITS) - 1;
+     const u64 ONCE_BITS = NEDGES >> PART_BITS;
+     const u64 TWICE_BYTES = (2 * ONCE_BITS) / 8;
+     const u64 TWICE_ATOMS = TWICE_BYTES / sizeof(atwice);
+     const u32 TWICE_PER_ATOM = sizeof(atwice) * 4;
+   */
+  printf("PART_MASK     =%08x\n", PART_MASK);
+  printf("ONCE_BITS     =%016x\n", ONCE_BITS);
+  printf("TWICE_BYTES   =%016x\n", TWICE_BYTES);
+  printf("sizeof(atwice)=%d\n", sizeof(atwice));
+  printf("TWICE_ATOMS   =%016x\n", TWICE_BYTES);
+  printf("TWICE_PER_ATOM=%08x\n", TWICE_PER_ATOM);
+
+  u64 edgeBytes = NEDGES/8; // edge bitmap: one bit per edge
+  u64 nodeBytes = TWICE_ATOMS*sizeof(atwice);  // counter storage for one partition
   int edgeUnit, nodeUnit;
   for (edgeUnit=0; edgeBytes >= 1024; edgeBytes>>=10,edgeUnit++) ;
   for (nodeUnit=0; nodeBytes >= 1024; nodeBytes>>=10,nodeUnit++) ;
-  printf("Using %d%cB edge and %d%cB node memory, %d-way siphash, and %d-byte counters\n",
+  printf("Using %d%cB edge and %d%cB node memory, %d-way siphash, and %d-byte counters (2-bit per node)\n",
      (int)edgeBytes, " KMGT"[edgeUnit], (int)nodeBytes, " KMGT"[nodeUnit], NSIPHASH, SIZEOF_TWICE_ATOM);
 
   thread_ctx *threads = (thread_ctx *)calloc(nthreads, sizeof(thread_ctx));
   assert(threads);
-  cuckoo_ctx ctx(nthreads, ntrims, MAXSOLS);
+  cuckoo_ctx ctx(nthreads, ntrims, MAXSOLS); // all threads share the same cuckoo_ctx
 
   u32 sumnsols = 0;
   for (int r = 0; r < range; r++) {
     time0 = timestamp();
     ctx.setheadernonce(header, sizeof(header), nonce + r);
     ctx.barry.clear();
+
+    // spawn all threads, each starts working immediately
     for (int t = 0; t < nthreads; t++) {
       threads[t].id = t;
       threads[t].ctx = &ctx;
       int err = pthread_create(&threads[t].thread, NULL, worker, (void *)&threads[t]);
       assert(err == 0);
     }
+
     // sleep(33); ctx.abort();
+
     for (int t = 0; t < nthreads; t++) {
       int err = pthread_join(threads[t].thread, NULL);
       assert(err == 0);
     }
+
     time1 = timestamp(); timems = (time1 - time0) / 1000000;
     printf("Time: %d ms\n", timems);
     for (unsigned s = 0; s < ctx.nsols; s++) {

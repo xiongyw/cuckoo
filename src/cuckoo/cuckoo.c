@@ -2,10 +2,12 @@
 #include <string.h> // for functions strlen, memset
 #include <stdarg.h>
 #include <stdio.h>
+#ifndef __NVCC__
 #include <chrono>
 #include <ctime>
-#include "../crypto/blake2.h"
 #include "../crypto/siphash.hpp"
+#endif  // __NVCC__
+#include "../crypto/blake2.h"
 
 #ifdef SIPHASH_COMPAT
 #include <stdio.h>
@@ -18,10 +20,12 @@
 char LAST_ERROR_REASON[MAX_NAME_LEN];
 const char *errstr[] = { "OK", "wrong header length", "edge too big", "edges not ascending", "endpoints don't match up", "branch in cycle", "cycle dead ends", "cycle too short"};
 
+#ifndef __NVCC__
 // generate edge endpoint in cuckoo graph without partition bit
 word_t sipnode(siphash_keys *keys, word_t edge, u32 uorv) {
   return keys->siphash24(2*edge + uorv) & EDGEMASK;
 }
+#endif  // __NVCC__
 
 // verify that edges are ascending and form a cycle in header-generated graph
 int verify(word_t edges[PROOFSIZE], siphash_keys *keys) {
@@ -77,10 +81,14 @@ word_t sipnode_(siphash_keys *keys, word_t edge, u32 uorv) {
 }
 
 u64 timestamp() {
+#ifndef __NVCC__
         using namespace std::chrono;
         high_resolution_clock::time_point now = high_resolution_clock::now();
         auto dn = now.time_since_epoch();
         return dn.count();
+#else
+        return 0;
+#endif
 }
 
 
