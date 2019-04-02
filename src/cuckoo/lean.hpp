@@ -65,9 +65,21 @@ const word_t NODEMASK = (EDGEMASK << 1) | (word_t)1;
 #define NPREFETCH 32
 #endif
 
+/*
+ * during edge trimming, the data structure holding nodes' degree count is `twice_set`;
+ * after edge trimming, the same memory used for twice_set is not freed, but used
+ * for storing data structure for "cuckoo hash" table, which stores live edges.
+ * that's why it requires that sizeof(cuckoo_hash) == sizeof(twice_set).
+ *
+ * the hash function used by cuckoo_hash is quite simple: each element is an uint64_t
+ * composed by u & v (even node number and odd node number), the key is u, and the hash
+ * function is a right shift: hash(key)=hash(u)=u>>IDXSHIFT
+ *
+ * for conflicts, it looks sequentially for the next slot, until to the end.
+ */
 #ifndef IDXSHIFT
 // we want sizeof(cuckoo_hash) == sizeof(twice_set), so
-// CUCKOO_SIZE * sizeof(u64)   == 2 * ONCE_BITS / 32
+// CUCKOO_SIZE * sizeof(u64)   == 2 * ONCE_BITS / 8
 // CUCKOO_SIZE * 2             == 2 * ONCE_BITS / 32
 // (NNODES >> IDXSHIFT) * 2      == 2 * ONCE_BITS / 32
 // NNODES >> IDXSHIFT            == NEDGES >> PART_BITS >> 5
@@ -485,9 +497,20 @@ void *worker(void *vp) {
 
   shrinkingset *alive = ctx->alive;
   // if (tp->id == 0) printf("initial size %d\n", NEDGES);
+  /*
+   * the edge-trimming process are divided in multiple rounds. besides the edge-bitmap,
+   * edge-trimming also needs nodes' degree counter. for each round, the nodes' degree counter
+   * is either for even nodes, or for odd nodes, never for both (which is possible but
+   * not used since we are lean in memory). a even-round is followed by a odd-round, and vice
+   * versa (not that the number of rounds needs not to be even number).
+   */
   for (u32 round=0; round < ctx->ntrims; round++) {
     // if (tp->id == 0) printf("round %2d partition sizes", round);
     for (u32 part = 0; part <= PART_MASK; part++) {
+        /*
+         * for each round (even or odd), the nodes are divided into partitions (because of lean-memory),
+         * such that the nodes' degree counter is only for one partition at a time
+         */
         // step 1: clear all counts: only let the 1st thread do this
         if (tp->id == 0) {
             ctx->nonleaf->clear(); // clear all counts

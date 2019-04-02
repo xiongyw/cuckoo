@@ -63,14 +63,15 @@
 #define BIGSIZE 4
 // no compression needed
 #define COMPRESSROUND 0
-#else
+#else  // EDGEBITS > 15
 #define BIGSIZE 5
 // YZ compression round; must be even
 #ifndef COMPRESSROUND
 #define COMPRESSROUND 14
-#endif
-#endif
-#endif
+#endif // COMPRESSROUND
+#endif // EDGEBITS <= 15
+#endif // BIGSIZE
+
 // size in bytes of a small bucket entry
 #define SMALLSIZE BIGSIZE
 
@@ -165,7 +166,7 @@ const u32 ZBUCKETSIZE = NTRIMMEDZ * (BIGSIZE + sizeof(u32));  // assumes EDGEBIT
 #else
 const u32 ZBUCKETSIZE = ZBUCKETSLOTS * BIGSIZE0;
 #endif
-const u32 TBUCKETSIZE = ZBUCKETSLOTS * BIGSIZE;
+const u32 TBUCKETSIZE = ZBUCKETSLOTS * BIGSIZE;  // T: Thread
 
 template<u32 BUCKETSIZE>
 struct zbucket {
@@ -210,6 +211,7 @@ struct indexer {
     for (u32 x = 0; x < NX; x++)
       index[x] = foo[x][y].bytes - (u8 *)foo;
   }
+
   offset_t storev(yzbucket<BUCKETSIZE> *buckets, const u32 y) {
     u8 const *base = (u8 *)buckets;
     offset_t sumsize = 0;
@@ -217,11 +219,13 @@ struct indexer {
       sumsize += buckets[x][y].setsize(base+index[x]);
     return sumsize;
   }
+
   void matrixu(const u32 x) {
     const yzbucket<BUCKETSIZE> *foo = 0;
     for (u32 y = 0; y < NY; y++)
       index[y] = foo[x][y].bytes - (u8 *)foo;
   }
+
   offset_t storeu(yzbucket<BUCKETSIZE> *buckets, const u32 x) {
     u8 const *base = (u8 *)buckets;
     offset_t sumsize = 0;
@@ -237,7 +241,7 @@ struct indexer {
 class edgetrimmer; // avoid circular references
 
 typedef struct {
-  u32 id;
+  u32 id; // thread idx
   pthread_t thread;
   edgetrimmer *et;
 } thread_ctx;
@@ -274,6 +278,7 @@ public:
     for (offset_t i=0; i<n; i+=4096)
       *(u32 *)(p+i) = 0;
   }
+
   edgetrimmer(const u32 n_threads, const u32 n_trims, const bool show_all) : barry(n_threads) {
     assert(sizeof(matrix<ZBUCKETSIZE>) == NX * sizeof(yzbucket<ZBUCKETSIZE>));
     assert(sizeof(matrix<TBUCKETSIZE>) == NX * sizeof(yzbucket<TBUCKETSIZE>));
@@ -293,6 +298,7 @@ public:
     tzs     = new zbucket16[nthreads];
     tcounts = new offset_t[nthreads];
   }
+
   ~edgetrimmer() {
     delete[] buckets;
     delete[] tbuckets;
@@ -301,6 +307,7 @@ public:
     delete[] tzs;
     delete[] tcounts;
   }
+
   offset_t count() const {
     offset_t cnt = 0;
     for (u32 t = 0; t < nthreads; t++)
@@ -308,6 +315,10 @@ public:
     return cnt;
   }
 
+  /*
+   * -id: thread idx
+   * -uorv: even or odd
+   */
   void genUnodes(const u32 id, const u32 uorv) {
     u64 rdtsc0, rdtsc1;
 #ifdef NEEDSYNC
@@ -982,7 +993,7 @@ public:
 #define BIGGERSIZE BIGSIZE
 #define EXPANDROUND COMPRESSROUND
 #endif
-  void trimmer(u32 id) {
+  void trimmer(u32 id) {  // id: thread idx
     genUnodes(id, 0);
     barrier();
     genVnodes(id, 1);
