@@ -58,6 +58,14 @@ int main(int argc, char **argv) {
         break;
     }
   }
+  printf("sizeof(BIGTYPE0)=%d, BIGSIZE=%d, BIGSIZE0=%d, COMPRESSROUND=%d, EXPANDROUND=%d\n",
+          sizeof(BIGTYPE0), BIGSIZE, BIGSIZE0, COMPRESSROUND, EXPANDROUND);
+  printf("NX=%08x, NY=%08x, NZ=%08x, NZ1=%08x, NZ2=%08x\n", NX, NY, NZ, NZ1, NZ2);
+  printf("ZBUCKETSIZE=%08x, TBUCKETSIZE=%08x, sizeof(zbucket)=%08x, sizeof(yzbucket)=%08x, sizeof(matrix)=%08x\n",
+          ZBUCKETSIZE, TBUCKETSIZE,
+          sizeof(zbucket<ZBUCKETSIZE>),
+          sizeof(yzbucket<ZBUCKETSIZE>),
+          sizeof(matrix<ZBUCKETSIZE>));
   printf("Looking for %d-cycle on cuckoo%d(\"%s\",%d", PROOFSIZE, NODEBITS, header, nonce);
   if (range > 1)
     printf("-%d", nonce+range-1);
@@ -70,8 +78,8 @@ int main(int argc, char **argv) {
   int sunit,tunit;
   for (sunit=0; sbytes >= 10240; sbytes>>=10,sunit++) ;
   for (tunit=0; tbytes >= 10240; tbytes>>=10,tunit++) ;
-  printf("Using %d%cB bucket memory at %lx,\n", sbytes, " KMGT"[sunit], (u64)ctx.trimmer->buckets);
-  printf("%dx%d%cB thread memory at %lx,\n", nthreads, tbytes, " KMGT"[tunit], (u64)ctx.trimmer->tbuckets);
+  printf("Using %d%cB bucket memory (0x%llxB) at %lx,\n", sbytes, " KMGT"[sunit], ctx.sharedbytes(), (u64)ctx.trimmer->buckets);
+  printf("%dx%d%cB thread memory (0x%lxB) at %lx,\n", nthreads, tbytes, " KMGT"[tunit], ctx.threadbytes(), (u64)ctx.trimmer->tbuckets);
   printf("%d-way siphash, and %d buckets.\n", NSIPHASH, NX);
 
   u32 sumnsols = 0;

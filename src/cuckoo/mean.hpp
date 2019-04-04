@@ -7,6 +7,8 @@
 // my own cycle finding is run single threaded to avoid losing cycles
 // to race conditions (typically takes under 1% of runtime)
 
+#define MEAN_VERBOSE   1
+
 #include "cuckoo.h"
 #include "../crypto/siphashxN.h"
 #include <stdlib.h>
@@ -64,7 +66,7 @@
 // no compression needed
 #define COMPRESSROUND 0
 #else  // EDGEBITS > 15
-#define BIGSIZE 5
+#define BIGSIZE 5   // 5-bytes
 // YZ compression round; must be even
 #ifndef COMPRESSROUND
 #define COMPRESSROUND 14
@@ -190,6 +192,7 @@ struct zbucket {
 #endif
     };
   };
+
   u32 setsize(u8 const *end) {
     size = end - bytes;
     assert(size <= BUCKETSIZE);
@@ -331,6 +334,8 @@ public:
     const u32 starty = NY *  id    / nthreads;
     const u32   endy = NY * (id+1) / nthreads;
     u32 edge = starty << YZBITS, endedge = edge + NYZ;
+    //printf("%s(id=%d): NY=%d, YZBITS=%d, NYZ=%08x\n", __FUNCTION__, id, NY, YZBITS, NYZ);
+    printf("%s(id=%d): starty=%08x, endy=%08x, edge=%08x, endedge=%08x\n", __FUNCTION__, id, starty, endy, edge, endedge);
 #if NSIPHASH == 4
     const __m128i vxmask = _mm_set1_epi64x(XMASK);
     const __m128i vyzmask = _mm_set1_epi64x(YZMASK);
@@ -711,13 +716,25 @@ public:
 // bit        39..34    33..21     20..13     12..0
 // write      UYYYYY    UZZZZZ     VYYYYY     VZZZZ   within VX partition
           const u64 e = *(u64 *)readbig & SRCSLOTMASK;
+#if (MEAN_VERBOSE)
+          u32 uyz = (u32)(e >> YZBITS);  // uYZ with shorter Y-bit
+          u32 delta0 = (uyz - uxyz);
+          u32 delta1 = delta0 & SRCPREFMASK;
+          printf("%s(id=%d, round=%d): vx=%d, ux=%d, uxyz0=%08x, e=%016llx, uyz=%08x, delta0=%08x, delta1=%08x, uxyz1=%08x\n", __FUNCTION__,
+                  id, round, vx, ux, uxyz, e, uyz, delta0, delta1, uxyz+delta1);
+          uxyz += delta1;
+#else
           uxyz += ((u32)(e >> YZBITS) - uxyz) & SRCPREFMASK;
+#endif
 // if (round==6) printf("id %d vx %d ux %d e %010lx suffUXYZ %05x suffUXY %03x UXYZ %08x UXY %04x mask %x\n", id, vx, ux, e, (u32)(e >> YZBITS), (u32)(e >> YZZBITS), uxyz, uxyz>>ZBITS, SRCPREFMASK);
           const u32 vy = (e >> ZBITS) & YMASK;
 // bit     41/39..34    33..26     25..13     12..0
 // write      UXXXXX    UYYYYY     UZZZZZ     VZZZZ   within VX VY partition
           *(u64 *)(small0+small.index[vy]) = ((u64)uxyz << ZBITS) | (e & ZMASK);
           uxyz &= ~ZMASK;
+#if MEAN_VERBOSE
+          printf("%s(id=%d, round=%d): uxyz=%08x\n", __FUNCTION__, id, round, uxyz);
+#endif
           small.index[vy] += DSTSIZE;
         }
         if (unlikely(uxyz >> YZBITS != ux))
@@ -1038,6 +1055,7 @@ void *etworker(void *vp) {
 // grow with cube root of size, hardly affected by trimming
 const u32 MAXPATHLEN = 16 << (EDGEBITS/3);
 
+// array
 const u32 CUCKOO_SIZE = 2 * NX * NYZ2;
 
 int nonce_cmp(const void *a, const void *b) {
@@ -1084,6 +1102,7 @@ public:
   u32 threadbytes() const {
     return sizeof(thread_ctx) + sizeof(yzbucket<TBUCKETSIZE>) + sizeof(zbucket8) + sizeof(zbucket16) + sizeof(zbucket32);
   }
+
   void recordedge(const u32 i, const u32 u2, const u32 v2) {
     const u32 u1 = u2/2;
     const u32 ux = u1 >> YZ2BITS;
@@ -1148,6 +1167,7 @@ public:
 
   const u32 CUCKOO_NIL = ~0;
 
+  // -u:
   u32 path(u32 u, u32 *us) const {
     u32 nu, u0 = u;
     for (nu = 0; u != CUCKOO_NIL; u = cuckoo[u]) {
@@ -1163,6 +1183,7 @@ public:
     return nu-1;
   }
 
+  // finding cycles by adding edges(u, v) one by one
   void findcycles() {
     u32 us[MAXPATHLEN], vs[MAXPATHLEN];
     u64 rdtsc0, rdtsc1;
@@ -1177,7 +1198,7 @@ public:
 // bit        21..11     10...0
 // write      UYYZZZ'    VYYZZ'   within VX partition
           const u32 e = *readbig;
-          const u32 uxyz = (ux << YZ2BITS) | (e >> YZ2BITS);
+          const u32 uxyz = (ux << YZ2BITS) | (e >> YZ2BITS);  // YZ2BITS=11
           const u32 vxyz = (vx << YZ2BITS) | (e & YZ2MASK);
           const u32 u0 = uxyz << 1, v0 = (vxyz << 1) | 1;
           if (u0 != CUCKOO_NIL) {
@@ -1207,9 +1228,13 @@ public:
     printf("findcycles rdtsc: %lu\n", rdtsc1-rdtsc0);
   }
 
+  // return nr of solutions
   int solve() {
     assert((u64)CUCKOO_SIZE * sizeof(u32) <= trimmer->nthreads * sizeof(yzbucket<TBUCKETSIZE>));
+
     trimmer->trim();
+
+    // reuse the tbuckets[] for storing remaining edges, as a directed forest of nodes
     cuckoo = (u32 *)trimmer->tbuckets;
     memset(cuckoo, CUCKOO_NIL, CUCKOO_SIZE * sizeof(u32));
     findcycles();
