@@ -261,7 +261,7 @@ public:
   yzbucket<TBUCKETSIZE> *tbuckets;
   zbucket32 *tedges;
   zbucket16 *tzs;
-  zbucket8 *tdegs;
+  zbucket8 *tdegs;  // node degree
   offset_t *tcounts;
   u32 ntrims;
   u32 nthreads;
@@ -319,6 +319,11 @@ public:
   }
 
   /*
+   * genUnodes, fills buckets with 22-bit UYZ of an edge plus lower 10 or 18 bits of the edge index:
+   *
+   * bit  39/31..22 21..15 14..0
+   * read edge      UYYYYY UZZZZ within UX partition
+   *
    * -id: thread idx
    * -uorv: even or odd
    */
@@ -504,6 +509,14 @@ public:
     tcounts[id] = sumsize/BIGSIZE0;
   }
 
+  /*
+   * genVnodes then does trimming on U nodes while also generating UVYZ from the (fully recovered) edge index and storing
+   *
+   * bit   39..37 36..22 21..15 14..0
+   * write UYYYYY UZZZZZ VYYYYY VZZZZ within VX partition
+   *
+   * Edges (ui,vi) are stored in bucket[uiX][viX] at the end of genVnodes and trimedges.
+   */
   void genVnodes(const u32 id, const u32 uorv) {
     u64 rdtsc0, rdtsc1;
 #if NSIPHASH == 4
@@ -530,65 +543,90 @@ public:
     u8 const *small0 = (u8 *)tbuckets[id];
     const u32 startux = NX *  id    / nthreads;
     const u32   endux = NX * (id+1) / nthreads;
+    printf("%s(id=%d): (startux, endux)=(%d,%d)\n", __FUNCTION__, id, startux, endux);
     for (u32 ux = startux; ux < endux; ux++) { // matrix x == ux
       small.matrixu(0);
       for (u32 my = 0 ; my < NY; my++) {
         u32 edge = my << YZBITS;
         u8    *readbig = buckets[ux][my].bytes;
         u8 const *endreadbig = readbig + buckets[ux][my].size;
-// printf("id %d x %d y %d size %u read %d\n", id, ux, my, buckets[ux][my].size, readbig-base);
+        // printf("id %d x %d y %d size %u read %d\n", id, ux, my, buckets[ux][my].size, readbig-base);
         for (; readbig < endreadbig; readbig += BIGSIZE0) {
-// bit     39/31..21     20..13    12..0
-// read         edge     UYYYYY    UZZZZ   within UX partition
+            // bit     39/31..21     20..13    12..0
+            // read         edge     UYYYYY    UZZZZ   within UX partition
           BIGTYPE0 e = *(BIGTYPE0 *)readbig;
 #if BIGSIZE0 > 4
           e &= BIGSLOTMASK0;
 #elif defined NEEDSYNC
           if (unlikely(!e)) { edge += NNONYZ; continue; }
 #endif
+
+#if MEAN_VERBOSE == 1
+          /* recover full edge bits, assuming that the difference between two adjacent sorted edges is less than 2^10. e.g.:
+           * genVnodes(id=0): (startux, endux)=(0,128)
+           * genVnodes(id=0): ux=0, my=0: e_pre=00000000, e_low10=0000020e, delta=0000020e, edge=0000020e
+           * genVnodes(id=0): ux=0, my=0: e_pre=0000020e, e_low10=00000399, delta=0000018b, edge=00000399
+           * genVnodes(id=0): ux=0, my=0: e_pre=00000399, e_low10=00000016, delta=fffffc7d, edge=00000416   <- carry happens here
+           * genVnodes(id=0): ux=0, my=0: e_pre=00000416, e_low10=00000054, delta=fffffc3e, edge=00000454
+           */
+          u32 e_pre = edge;   // previous edge
+          u32 e_low10 = e >> YZBITS;  // lowe bits of the current edge
+          u32 delta = (u32)(e_low10 - e_pre);
+          edge = e_pre + (delta & (NNONYZ - 1));
+          printf("NONYZBITS=%d, NNONYZ=%08x, NNONYZ-1=%08x\n", NONYZBITS, NNONYZ, NNONYZ-1);
+          printf("%s(id=%d): ux=%d, my=%d: e_pre=%08x, e_low10=%08x, delta=%08x, edge=%08x\n", __FUNCTION__, id, ux, my, e_pre, e_low10, delta, edge);
+#else
           edge += ((u32)(e >> YZBITS) - edge) & (NNONYZ-1);
-// if (ux==78 && my==243) printf("id %d ux %d my %d e %08x prefedge %x edge %x\n", id, ux, my, e, e >> YZBITS, edge);
+#endif
+          // if (ux==78 && my==243) printf("id %d ux %d my %d e %08x prefedge %x edge %x\n", id, ux, my, e, e >> YZBITS, edge);
           const u32 uy = (e >> ZBITS) & YMASK;
-// bit         39..13     12..0
-// write         edge     UZZZZ   within UX UY partition
+          // bit         39..13     12..0
+          // write         edge     UZZZZ   within UX UY partition
           *(u64 *)(small0+small.index[uy]) = ((u64)edge << ZBITS) | (e & ZMASK);
-// printf("id %d ux %d y %d e %010lx e' %010x\n", id, ux, my, e, ((u64)edge << ZBITS) | (e >> YBITS));
+          // printf("id %d ux %d y %d e %010lx e' %010x\n", id, ux, my, e, ((u64)edge << ZBITS) | (e >> YBITS));
           small.index[uy] += SMALLSIZE;
         }
         if (unlikely(edge >> NONYZBITS != (((my+1) << YZBITS) - 1) >> NONYZBITS))
         { printf("OOPS1: id %d ux %d y %d edge %x vs %x\n", id, ux, my, edge, ((my+1)<<YZBITS)-1); exit(0); }
       }
+
       u8 *degs = tdegs[id];
       small.storeu(tbuckets+id, 0);
       dst.matrixu(ux);
       for (u32 uy = 0 ; uy < NY; uy++) {
-        memset(degs, 0xff, NZ);
         u8 *readsmall = tbuckets[id][uy].bytes, *endreadsmall = readsmall + tbuckets[id][uy].size;
-// if (id==1) printf("id %d ux %d y %d size %u sumsize %u\n", id, ux, uy, tbuckets[id][uy].size/BIGSIZE, sumsize);
-        for (u8 *rdsmall = readsmall; rdsmall < endreadsmall; rdsmall+=SMALLSIZE)
-          degs[*(u32 *)rdsmall & ZMASK]++;
+        // if (id==1) printf("id %d ux %d y %d size %u sumsize %u\n", id, ux, uy, tbuckets[id][uy].size/BIGSIZE, sumsize);
+        memset(degs, 0xff, NZ); // default degree is -1
+        for (u8 *rdsmall = readsmall; rdsmall < endreadsmall; rdsmall+=SMALLSIZE) {
+            degs[*(u32 *)rdsmall & ZMASK]++; // increase the degree of the node
+        }
+
         u16 *zs = tzs[id];
-#ifdef SAVEEDGES
+#ifdef SAVEEDGES  // save edge in global bucket or thread-specific data
         u32 *edges0 = buckets[ux][uy].edges;
 #else
         u32 *edges0 = tedges[id];
 #endif
         u32 *edges = edges0, edge = 0;
+
         for (u8 *rdsmall = readsmall; rdsmall < endreadsmall; rdsmall+=SMALLSIZE) {
-// bit         39..13     12..0
-// read          edge     UZZZZ    sorted by UY within UX partition
+            // bit         39..13     12..0
+            // read          edge     UZZZZ    sorted by UY within UX partition
           const u64 e = *(u64 *)rdsmall;
           edge += ((e >> ZBITS) - edge) & NONDEGMASK;
-// if (id==0) printf("id %d ux %d uy %d e %010lx pref %4x edge %x mask %x\n", id, ux, uy, e, e>>ZBITS, edge, NONDEGMASK);
-          *edges = edge;
+          // if (id==0) printf("id %d ux %d uy %d e %010lx pref %4x edge %x mask %x\n", id, ux, uy, e, e>>ZBITS, edge, NONDEGMASK);
+          *edges = edge;   // save edge
           const u32 z = e & ZMASK;
-          *zs = z;
-          const u32 delta = degs[z] ? 1 : 0;
+          *zs = z;         // save uZ
+          const u32 delta = degs[z] ? 1 : 0;  // if degree < 1, not store the corresponding edge and z
           edges += delta;
           zs    += delta;
         }
         if (unlikely(edge >> NONDEGBITS != EDGEMASK >> NONDEGBITS))
         { printf("OOPS2: id %d ux %d uy %d edge %x vs %x\n", id, ux, uy, edge, EDGEMASK); exit(0); }
+
+
+
         assert(edges - edges0 < NTRIMMEDZ);
         const u16 *readz = tzs[id];
         const u32 *readedge = edges0;

@@ -54,7 +54,7 @@ mean29x8:	cuckoo.h ../crypto/siphash.hpp mean.hpp mean.cpp Makefile
 	$(GPP) -o $@ -mavx2 -DNSIPHASH=8 -DEDGEBITS=29 mean.cpp cuckoo.c $(BLAKE_2B_SRC) $(SIPHASH_SRC)
 
 mean29x1:	cuckoo.h ../crypto/siphash.hpp mean.hpp mean.cpp Makefile
-	$(GPP) -o $@ -DNSIPHASH=1 -DEDGEBITS=29 mean.cpp cucko.c $(BLAKE_2B_SRC) $(SIPHASH_SRC)
+	$(GPP) -o $@ -DNSIPHASH=1 -DEDGEBITS=29 mean.cpp cuckoo.c $(BLAKE_2B_SRC) $(SIPHASH_SRC)
 
 # lean
 
