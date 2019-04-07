@@ -561,22 +561,21 @@ public:
           if (unlikely(!e)) { edge += NNONYZ; continue; }
 #endif
 
-#if MEAN_VERBOSE == 1
-          /* recover full edge bits, assuming that the difference between two adjacent sorted edges is less than 2^10. e.g.:
-           * genVnodes(id=0): (startux, endux)=(0,128)
-           * genVnodes(id=0): ux=0, my=0: e_pre=00000000, e_low10=0000020e, delta=0000020e, edge=0000020e
-           * genVnodes(id=0): ux=0, my=0: e_pre=0000020e, e_low10=00000399, delta=0000018b, edge=00000399
-           * genVnodes(id=0): ux=0, my=0: e_pre=00000399, e_low10=00000016, delta=fffffc7d, edge=00000416   <- carry happens here
-           * genVnodes(id=0): ux=0, my=0: e_pre=00000416, e_low10=00000054, delta=fffffc3e, edge=00000454
-           */
-          u32 e_pre = edge;   // previous edge
-          u32 e_low10 = e >> YZBITS;  // lowe bits of the current edge
-          u32 delta = (u32)(e_low10 - e_pre);
-          edge = e_pre + (delta & (NNONYZ - 1));
-          printf("NONYZBITS=%d, NNONYZ=%08x, NNONYZ-1=%08x\n", NONYZBITS, NNONYZ, NNONYZ-1);
-          printf("%s(id=%d): ux=%d, my=%d: e_pre=%08x, e_low10=%08x, delta=%08x, edge=%08x\n", __FUNCTION__, id, ux, my, e_pre, e_low10, delta, edge);
-#else
+          /* recover full edge bits, assuming that the difference between two adjacent sorted edges is less than 2^10 */
+#if MEAN_VERBOSE == 0
           edge += ((u32)(e >> YZBITS) - edge) & (NNONYZ-1);
+#else
+          u32 e_pre = edge;         // full bits of previous edge
+          u32 e_cur = e >> YZBITS;  // lower bits of current edge
+          u32 delta = (u32)(e_cur - e_pre) & (NNONYZ - 1);
+          edge = e_pre + delta;
+          printf("%s(id=%d): ux=%d, my=%d: e_pre=%08x, e_cur=%08x, delta=%08x, edge=%08x\n", __FUNCTION__, id, ux, my, e_pre, e_cur, delta, edge);
+          /* genVnodes(id=0): ux=0, my=0: e_pre=00000000, e_cur=0000020e, delta=0000020e, edge=0000020e
+           * genVnodes(id=0): ux=0, my=0: e_pre=0000020e, e_cur=00000399, delta=0000018b, edge=00000399
+           * genVnodes(id=0): ux=0, my=0: e_pre=00000399, e_cur=00000016, delta=0000007d, edge=00000416  <-- delta 0x7d recovered
+           * genVnodes(id=0): ux=0, my=0: e_pre=00000416, e_cur=00000054, delta=0000003e, edge=00000454
+           * ...
+           */
 #endif
           // if (ux==78 && my==243) printf("id %d ux %d my %d e %08x prefedge %x edge %x\n", id, ux, my, e, e >> YZBITS, edge);
           const u32 uy = (e >> ZBITS) & YMASK;
