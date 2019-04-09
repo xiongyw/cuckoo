@@ -238,6 +238,7 @@ struct indexer {
   }
 };
 
+/* The return value of __builtin_expect(exp, c) is the value of `exp` */
 #define likely(x)   __builtin_expect((x)!=0, 1)
 #define unlikely(x) __builtin_expect((x), 0)
 
