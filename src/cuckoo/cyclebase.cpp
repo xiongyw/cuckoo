@@ -88,11 +88,6 @@ void cyclebase::addedge(u32 u0, u32 v0) {
         }
         assert(ncycles < MAXCYCLES);
     } else if (nu < nv) {
-        /* $6 in the paper: add the 8th edge: edge(u=10,v=11): 10->11
-         *
-         * nu = 1, ns: 11,12
-         * nv = 2, vs: 10,5,8
-         */
         pathcount[us[nu]]++;
 
         // reverse the shorter one
@@ -102,6 +97,11 @@ void cyclebase::addedge(u32 u0, u32 v0) {
         // join the two path: shorter->longer
         cuckoo[u] = v;
     } else {  // nu !< nv
+        /* EX: $6 in the paper: add the 8th edge: edge(u=10,v=11): 10->11
+         *
+         * nu = 2, ns[]: 10,5,8
+         * nv = 1, vs[]: 11,12
+         */
         pathcount[vs[nv]]++;
         // reverse vs[]
         while (nv--) {
