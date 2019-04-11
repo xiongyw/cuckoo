@@ -11,6 +11,8 @@
 #include "../crypto/siphash.cuh"
 #include "../crypto/blake2.h"
 
+#define ROO_VERBOSE  1
+
 typedef uint8_t u8;
 typedef uint16_t u16;
 typedef uint64_t u64; // save some typing
@@ -377,6 +379,7 @@ struct trimparams {
   blockstpb recover;
 
   trimparams() {
+    // note: tpb are kind of fixed, and blocks are calculated by `nthreads/tpb`: see `fill_default_params()`
     ntrims              =  176;
     genA.blocks         = 4096;
     genA.tpb            =  256;
@@ -450,6 +453,10 @@ struct edgetrimmer {
     cudaEventRecord(start, NULL);
   
     cudaMemset(indexesE[1], 0, indexesSize);
+
+#if ROO_VERBOSE
+    printf("%s(): tp.genA.blocks=%d, tp.genA.tpb=%d\n", __FUNCTION__, tp.genA.blocks, tp.genA.tpb);
+#endif
 
     SeedA<EDGES_A><<<tp.genA.blocks, tp.genA.tpb>>>(*dipkeys, (ulonglong4*)bufferAB, indexesE[1]);
   
@@ -721,6 +728,12 @@ CALL_CONVENTION void fill_default_params(SolverParams* params) {
   trimparams tp;
   params->device = 0;
   params->ntrims = tp.ntrims;
+
+  /*
+   * NEDGES/EDGE_BLOCK_SIZE: number of edge-blocks.
+   * NEDGES/EDGE_BLOCK_SIZE/tp.genA.tpb: number of blocks
+   * this implies that in genA, each thread just handles EDGE_BLOCK_SIZE (i.e., 64) edges
+   */
   params->genablocks = min(tp.genA.blocks, NEDGES/EDGE_BLOCK_SIZE/tp.genA.tpb);
   params->genatpb = tp.genA.tpb;
   params->genbtpb = tp.genB.tpb;
