@@ -75,7 +75,7 @@ __constant__ uint2 e0 = {0,0};
 /*
  * return the hashes for the last edge of the edge-block, and all the hashes in buf[]
  * are not XORed with the last one yet, so it will be done out of the scope of this
- * function. why?
+ * function. but why?
  */
 __device__ u64 dipblock(const siphash_keys &keys, const word_t edge, u64 *buf) {
     diphash_state shs(keys);
@@ -101,6 +101,20 @@ __device__ u32 endpoint(uint2 nodes, int uorv) {
 /*
  * the goal of SeedA is to put all edge(u,v) into buckets[row=uX][col=gpu-block-idx/NX]
  *
+ * - each cell is a bucket of size maxOut
+ * - in global buf, cells are ordered row by row (top to bottom); and within each row, from left to right
+ *
+ *                        \ | 0 | 1 | 2 |...| 63|
+ *                       ---+---+---+---+---+---|
+ *                        0 |   |   |   |   |   |
+ *                       ---+---+---+---+   +---|
+ *                        1 |   |   |   |   |   |
+ *                       ---+---+---+---+   +---|
+ *                       ...|          .....    |
+ *                       ---+---+---+---+   +---|
+ *                       63 |   |   |   |   |   |
+ *                       -----------------------+
+ *
  * 1. for edge-generation, all edges are divided by all threads according to their global idx,
  *    i.e., edges-per-thread(ept)=NEDGES/nthreads. For instance, if each thread handles 2
  *    edge-blocks (each edge-block contains 64 edges):
@@ -112,7 +126,7 @@ __device__ u32 endpoint(uint2 nodes, int uorv) {
  *    cuckaroo29, genA.blocks=4096. it's possible that multiple blocks write to same bucket column, in this case, global
  *    indexesE[] with atomicAdd() is used for synchronization among blocks.
  */
-template<int maxOut>  /* when invoked, maxOut is EDGEDS_A, which is the zbucket size in genA */
+template<int maxOut>  /* when invoked, maxOut is EDGEDS_A, which is the bucket size in genA */
 __global__ void SeedA(const siphash_keys &sipkeys, ulonglong4 * __restrict__ buffer, u32 * __restrict__ indexes) {
     const int group = blockIdx.x;         // a block is a "group" of threads
     const int dim = blockDim.x;           // tpb (thread-per-block)
@@ -132,7 +146,8 @@ __global__ void SeedA(const siphash_keys &sipkeys, ulonglong4 * __restrict__ buf
     __shared__ uint2 tmp[NX][FLUSHA2]; // needs to be ulonglong4 aligned. FLUSHA2 tmp edges per row?
     __shared__ int counters[NX];  /* one counter per row? */
     const int TMPPERLL4 = sizeof(ulonglong4) / sizeof(uint2);  /* how many tmp elements to fit one ulonglong4 */
-    u64 buf[EDGE_BLOCK_SIZE]; /* to hold one edge-block hash result. it uses which type of memory? or register files? */
+    /* all automatic variables other than arrays are stored in registers; arrays are in local memory, which is actually global mem */
+    u64 buf[EDGE_BLOCK_SIZE]; /* to hold one edge-block hash result */
 
     /*
      * reset some elements in the shared counters[] corresponding to the block, in parallel.
@@ -180,7 +195,7 @@ __global__ void SeedA(const siphash_keys &sipkeys, ulonglong4 * __restrict__ buf
                 int localIdx = min(FLUSHA2, counters[row]); // at this point, `counters[row]` may be bigger than `counter+1`.
                 int newCount = localIdx % FLUSHA;
                 int nflush = localIdx - newCount;
-                u32 grp = row * NX + col; // zbucket idx. it implies the zbuckets in buffer is aranged row by row.
+                u32 grp = row * NX + col; // bucket idx. it implies the buckets in buffer is aranged row by row.
                 int cnt = min((int)atomicAdd(indexes + grp, nflush), (int)(maxOut - nflush)); // cnt is the current index of the dst bucket
                 /* move from share mem to global buf */
                 for (int i = 0; i < nflush; i += TMPPERLL4) {
