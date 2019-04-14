@@ -99,7 +99,10 @@ __device__ u32 endpoint(uint2 nodes, int uorv) {
 #endif
 
 /*
- * the goal of SeedA is to put all edge(u,v) into buckets[row=uX][col=gpu-block-idx/NX]
+ * Seeding is divided into two steps:
+ * 1. SeedA(): put all edge(u,v) into buckets[row=uX][col=gpu-block-idx/NX].
+ * 2. SeedB(): sort each row of buckets that edge(u,v} is in buckets[uX][uY]. or, if treat buckets matrix
+ *    as an one-dimentional array, to put edge(u,v) into buckets[uXY].
  *
  * - each cell is a bucket of size maxOut
  * - in global buf, cells are ordered row by row (top to bottom); and within each row, from left to right
@@ -211,7 +214,6 @@ __global__ void SeedA(const siphash_keys &sipkeys, ulonglong4 * __restrict__ buf
         }
     }
 
-
     /*
      * flush the remaining edges in shared mem tmp[][], if there is any.
      * only part of the threads in the block execute the following
@@ -248,7 +250,13 @@ __device__ bool null(uint2 nodes) {
 #define FLUSHB 8
 #endif
 
-template<int maxOut>
+/*
+ * goal: put edge(u,v) into buckets[uX][uY], based on the fact that edge(u,v) is in buckets[uX][?].
+ *
+ * - num of cuda-blocks equal to num of buckets (4096), such that each cuda-block processes a bucket,
+ *   i.e., cuda-block i process buckets[i]. buckets[i] is in row i/NX.
+ */
+template<int maxOut> /* EDGES_A: max bucket size for both src and dst */
 __global__ void SeedB(const uint2 * __restrict__ source, ulonglong4 * __restrict__ destination, const u32 * __restrict__ srcIdx, u32 * __restrict__ dstIdx) {
     const int group = blockIdx.x;
     const int dim = blockDim.x;
@@ -262,8 +270,12 @@ __global__ void SeedB(const uint2 * __restrict__ source, ulonglong4 * __restrict
     for (int col = lid; col < NX; col += dim)
         counters[col] = 0;
     __syncthreads();
+
+    /* the row of the bucket processed by current block */
     const int row = group / NX;
+    /* num of edges in the current bucket */
     const int bucketEdges = min((int)srcIdx[group], (int)maxOut);
+    /* max num of edges processed by each thread in the block. threads's edges are interleaved for locality */
     const int loops = (bucketEdges + dim-1) / dim;
     for (int loop = 0; loop < loops; loop++) {
         int col;
@@ -271,10 +283,10 @@ __global__ void SeedB(const uint2 * __restrict__ source, ulonglong4 * __restrict
         const int edgeIndex = loop * dim + lid;
         if (edgeIndex < bucketEdges) {
             const int index = group * maxOut + edgeIndex;
-            uint2 edge = __ldg(&source[index]);
+            uint2 edge = __ldg(&source[index]);  // cuda intrinsic, read-only LoaD from Global memory. why it's faster?
             if (!null(edge)) {
-                u32 node1 = edge.x;
-                col = (node1 >> ZBITS) & XMASK;
+                u32 node1 = edge.x; // u
+                col = (node1 >> ZBITS) & XMASK; // uY
                 counter = min((int)atomicAdd(counters + col, 1), (int)(FLUSHB2-1)); // assuming COLS_LIMIT_LOSSES checked
                 tmp[col][counter] = edge;
             }
@@ -285,7 +297,7 @@ __global__ void SeedB(const uint2 * __restrict__ source, ulonglong4 * __restrict
             int newCount = localIdx % FLUSHB;
             int nflush = localIdx - newCount;
             u32 grp = row * NX + col;
-#ifdef SYNCBUG
+#ifdef SYNCBUG  // what's this?
             if (grp==0x2d6) printf("group %x size %d lid %d nflush %d\n", group, bucketEdges, lid, nflush);
 #endif
             int cnt = min((int)atomicAdd(dstIdx + grp, nflush), (int)(maxOut - nflush));
@@ -314,6 +326,13 @@ __global__ void SeedB(const uint2 * __restrict__ source, ulonglong4 * __restrict
     }
 }
 
+/*
+ * edge-counters for a bucket: 2-bit * NZ. so the num of 32-bit words for a counter array is 2*NZ/32=NZ/16.
+ * the 1st bit is stored in the 1st NZ/32 words, and the 2nd bits stored in the 2nd NZ/32 words.
+ * so each 32-bit word stores 1st bit (or 2nd bit) of edges' counters, use `>>5` get the word offset.
+ * - when write, both bits may be updated
+ * - when read, only need to read the 2nd bit
+ */
 __device__ __forceinline__  void Increase2bCounter(u32 *ecounters, const int bucket) {
     int word = bucket >> 5;
     unsigned char bit = bucket & 0x1F;
@@ -331,6 +350,34 @@ __device__ __forceinline__  bool Read2bCounter(u32 *ecounters, const int bucket)
     return (ecounters[word + NZ/32] >> bit) & 1;
 }
 
+/*
+ * Round is for trimming, trim on src buffer and put the result in dst buffer.
+ * NP: num of partitions of the source buffer.  each partition contains all buckets, the size of each bucket is partitioned. e.g.,
+ *  when NP=2, there are two partitions of the source buffer:
+ *                        \ | 0 | 1 | 2 |...| 63|
+ *          partition 0: ---+---+---+---+---+---|
+ *                        0 |   |   |   |   |   |
+ *                       ---+---+---+---+   +---|
+ *                        1 |   |   |   |   |   |
+ *                       ---+---+---+---+   +---|
+ *                       ...|          .....    |
+ *                       ---+---+---+---+   +---|
+ *                       63 |   |   |   |   |   |
+ *         partition 1:  -----------------------+
+ *                        0 |   |   |   |   |   |
+ *                       ---+---+---+---+   +---|
+ *                        1 |   |   |   |   |   |
+ *                       ---+---+---+---+   +---|
+ *                       ...|          .....    |
+ *                       ---+---+---+---+   +---|
+ *                       63 |   |   |   |   |   |
+ *                       -----------------------+
+ *
+ * maxIn: max size of source bucket
+ * maxOut: max size of dst bucket
+ *
+ * for each partition: one cuda-block processes one bucket (the src bucket size is maxIn/NP).
+ */
 template<int NP, int maxIn, int maxOut>
 __global__ void Round(const int round, const uint2 * __restrict__ src, uint2 * __restrict__ dst, const u32 * __restrict__ srcIdx, u32 * __restrict__ dstIdx) {
     const int group = blockIdx.x;
@@ -376,7 +423,7 @@ __global__ void Round(const int round, const uint2 * __restrict__ src, uint2 * _
                 u32 node0 = endpoint(edge, round&1);
                 if (Read2bCounter(ecounters, node0 & ZMASK)) {
                     u32 node1 = endpoint(edge, (round&1)^1);
-                    const int bucket = node1 >> ZBITS;
+                    const int bucket = node1 >> ZBITS; /* XY, one dimensional buckets[] index */
                     const int bktIdx = min(atomicAdd(dstIdx + bucket, 1), maxOut - 1);
                     dst[bucket * maxOut + bktIdx] = (round&1) ? make_uint2(node1, node0) : make_uint2(node0, node1);
                 }
@@ -385,11 +432,12 @@ __global__ void Round(const int round, const uint2 * __restrict__ src, uint2 * _
     }
 }
 
+/* pack all surviving edges in destination buffer, and store nedges in dstIdx[0]. */
 template<int maxIn>
 __global__ void Tail(const uint2 *source, uint2 *destination, const u32 *srcIdx, u32 *dstIdx) {
     const int lid = threadIdx.x;
     const int group = blockIdx.x;
-    const int dim = blockDim.x;
+    const int dim = blockDim.x; // tail.tpb=1024
     int myEdges = srcIdx[group];
     __shared__ int destIdx;
 
@@ -397,7 +445,7 @@ __global__ void Tail(const uint2 *source, uint2 *destination, const u32 *srcIdx,
         destIdx = atomicAdd(dstIdx, myEdges);
     __syncthreads();
     for (int i = lid; i < myEdges; i += dim)
-        destination[destIdx + lid] = source[group * maxIn + lid];
+        destination[destIdx + lid] = source[group * maxIn + lid]; // assumed that myEdges < dim?
 }
 
 #define checkCudaErrors_V(ans) ({if (gpuAssert((ans), __FILE__, __LINE__) != cudaSuccess) return;})
