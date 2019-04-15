@@ -146,8 +146,8 @@ __global__ void SeedA(const siphash_keys &sipkeys, ulonglong4 * __restrict__ buf
     /*
      * __shared__ is for intra-block threads communication
      */
-    __shared__ uint2 tmp[NX][FLUSHA2]; // needs to be ulonglong4 aligned. FLUSHA2 tmp edges per row?
-    __shared__ int counters[NX];  /* one counter per row? */
+    __shared__ uint2 tmp[NX][FLUSHA2]; // needs to be ulonglong4 aligned. 16KB
+    __shared__ int counters[NX];  /* one counter per row; 256B */
     const int TMPPERLL4 = sizeof(ulonglong4) / sizeof(uint2);  /* how many tmp elements to fit one ulonglong4 */
     /* all automatic variables other than arrays are stored in registers; arrays are in local memory, which is actually global mem */
     u64 buf[EDGE_BLOCK_SIZE]; /* to hold one edge-block hash result */
@@ -432,7 +432,12 @@ __global__ void Round(const int round, const uint2 * __restrict__ src, uint2 * _
     }
 }
 
-/* pack all surviving edges in destination buffer, and store nedges in dstIdx[0]. */
+/*
+ * pack all surviving edges in destination buffer, and store nedges in dstIdx[0].
+ * a gpu-block handles a bucket; within the gpu-block, the 1st thread update the shared
+ * dstIdx, and all threads copy one edge at a time from the bucket to the destination,
+ * in an interleaved way exploiting spatial locality.
+ */
 template<int maxIn>
 __global__ void Tail(const uint2 *source, uint2 *destination, const u32 *srcIdx, u32 *dstIdx) {
     const int lid = threadIdx.x;
@@ -445,7 +450,7 @@ __global__ void Tail(const uint2 *source, uint2 *destination, const u32 *srcIdx,
         destIdx = atomicAdd(dstIdx, myEdges);
     __syncthreads();
     for (int i = lid; i < myEdges; i += dim)
-        destination[destIdx + lid] = source[group * maxIn + lid]; // assumed that myEdges < dim?
+        destination[destIdx + lid] = source[group * maxIn + lid];
 }
 
 #define checkCudaErrors_V(ans) ({if (gpuAssert((ans), __FILE__, __LINE__) != cudaSuccess) return;})
