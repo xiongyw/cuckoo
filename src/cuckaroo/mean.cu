@@ -223,7 +223,11 @@ __global__ void SeedA(const siphash_keys &sipkeys, ulonglong4 * __restrict__ buf
         int localIdx = min(FLUSHA2, counters[row]);
         u32 grp = row * NX + col;
 
-        /* zero out some irrelevant edges at the end of TMPPERLL4 edges, since the flush unit is TMPPERLL4 edges */
+        /*
+         * zero out some irrelevant edges at the end of TMPPERLL4 edges, since the flush unit is TMPPERLL4 edges;
+         * the consequence is that in the end of the bucket, some of the edges may be null-edges, that's why
+         * in SeedB(), a null-edge check is employed.
+         */
         for (int j = localIdx; j % TMPPERLL4; j++) {
             tmp[row][j] = zero;
         }
