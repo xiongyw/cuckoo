@@ -593,6 +593,9 @@ struct edgetrimmer {
 
 #if ROO_VERBOSE
         printf("%s(): tp.genA.blocks=%d, tp.genA.tpb=%d, EDGE_BLOCK_SIZE=%d\n", __FUNCTION__, tp.genA.blocks, tp.genA.tpb, EDGE_BLOCK_SIZE);
+        printf("%s(): tp.genB.blocks=%d, tp.genB.tpb=%d\n", __FUNCTION__, tp.genB.blocks, tp.genB.tpb);
+        printf("%s(): tp.trim.blocks=%d, tp.trim.tpb=%d\n", __FUNCTION__, tp.trim.blocks, tp.trim.tpb);
+        printf("%s(): tp.tail.blocks=%d, tp.tail.tpb=%d\n", __FUNCTION__, tp.tail.blocks, tp.tail.tpb);
 #endif
 
         cudaMemset(indexesE[1], 0, indexesSize);
