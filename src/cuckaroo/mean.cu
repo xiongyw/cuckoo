@@ -11,7 +11,7 @@
 #include "../crypto/siphash.cuh"
 #include "../crypto/blake2.h"
 
-#define ROO_VERBOSE  1
+#define ROO_VERBOSE  0
 
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -354,6 +354,29 @@ __device__ __forceinline__  bool Read2bCounter(u32 *ecounters, const int bucket)
     return (ecounters[word + NZ/32] >> bit) & 1;
 }
 
+#if ROO_VERBOSE
+__global__ void live_edges(int round, const u32* idx0, const u32* idx1) {
+    const int group = blockIdx.x;
+    const int dim = blockDim.x;
+    const int lid = threadIdx.x;
+    int gid = group * dim + lid;
+
+    u32 nr_edges0 = 0;
+    u32 nr_edges1 = 0;
+    float pct0 = 0., pct1 = 0.;
+
+    if (gid == 0) {
+        for (u32 i = 0; i < NX2; i ++) {
+            nr_edges0 += idx0[i];
+            nr_edges1 += idx1[i];
+        }
+        pct0 = (float)nr_edges0 / NEDGES;
+        pct1 = (float)nr_edges1 / NEDGES;
+        printf("After round %3d, NEDGES=%08x, nr_edges0=%08x (%.6f), nr_edges1=%08x (%.6f)\n", round, NEDGES, nr_edges0, pct0, nr_edges1, pct1);
+    }
+}
+#endif
+
 /*
  * Round is for trimming, trim on src buffer and put the result in dst buffer.
  * NP: num of partitions of the source buffer.  each partition contains all buckets, the size of each bucket is partitioned. e.g.,
@@ -627,55 +650,53 @@ struct edgetrimmer {
         const size_t qB = sizeB/NB;
         qE = NX2 / NB;
         for (u32 i = NB; i--; ) {
-            Round<1, EDGES_A, EDGES_B/NB><<<tp.trim.blocks/NB, tp.trim.tpb>>>(0, (uint2*)(bufferA+i*qA), (uint2*)(bufferB+i*qB), indexesE[0]+i*qE, indexesE[1+i]); // to .632
+            Round<1, EDGES_A, EDGES_B/NB><<<tp.trim.blocks/NB, tp.trim.tpb>>>(0, (uint2*)(bufferA+i*qA), (uint2*)(bufferB+i*qB), indexesE[0]+i*qE, indexesE[1+i]); // to .632, then to .316
             if (abort) return false;
         }
-
 #if ROO_VERBOSE
-        u32 nr_edges = 0;
-        for (u32 i = 0; i < NX2; i ++) nr_edges += indexesE[1][i];
-        printf("After Round(0): nr_edges=%d\n", nr_edges);
+            live_edges<<<1,1>>>(0, indexesE[0], indexesE[1]);
 #endif
+
 
         cudaMemset(indexesE[0], 0, indexesSize);
 
         Round<NB, EDGES_B/NB, EDGES_B/2><<<tp.trim.blocks, tp.trim.tpb>>>(1, (const uint2 *)bufferB, (uint2 *)bufferA, indexesE[1], indexesE[0]); // to .296
         if (abort) return false;
-
 #if ROO_VERBOSE
-        nr_edges = 0;
-        for (u32 i = 0; i < NX2; i ++) nr_edges += indexesE[0][i];
-        printf("After Round(1): nr_edges=%d\n", nr_edges);
+        live_edges<<<1,1>>>(1, indexesE[0], indexesE[1]);
 #endif
+
         cudaMemset(indexesE[1], 0, indexesSize);
 
         Round<1, EDGES_B/2, EDGES_A/4><<<tp.trim.blocks, tp.trim.tpb>>>(2, (const uint2 *)bufferA, (uint2 *)bufferB, indexesE[0], indexesE[1]); // to .176
         if (abort) return false;
-
 #if ROO_VERBOSE
-        nr_edges = 0;
-        for (u32 i = 0; i < NX2; i ++) nr_edges += indexesE[1][i];
-        printf("After Round(2): nr_edges=%d\n", nr_edges);
+        live_edges<<<1,1>>>(2, indexesE[0], indexesE[1]);
 #endif
+
         cudaMemset(indexesE[0], 0, indexesSize);
 
         Round<1, EDGES_A/4, EDGES_B/4><<<tp.trim.blocks, tp.trim.tpb>>>(3, (const uint2 *)bufferB, (uint2 *)bufferA, indexesE[1], indexesE[0]); // to .117
         if (abort) return false;
-
 #if ROO_VERBOSE
-        nr_edges = 0;
-        for (u32 i = 0; i < NX2; i ++) nr_edges += indexesE[0][i];
-        printf("After Round(3): nr_edges=%d\n", nr_edges);
+        live_edges<<<1,1>>>(3, indexesE[0], indexesE[1]);
 #endif
+
         cudaDeviceSynchronize();
 
         for (int round = 4; round < tp.ntrims; round += 2) {
             cudaMemset(indexesE[1], 0, indexesSize);
             Round<1, EDGES_B/4, EDGES_B/4><<<tp.trim.blocks, tp.trim.tpb>>>(round, (const uint2 *)bufferA, (uint2 *)bufferB, indexesE[0], indexesE[1]);
             if (abort) return false;
+#if ROO_VERBOSE
+            live_edges<<<1,1>>>(round, indexesE[0], indexesE[1]);
+#endif
             cudaMemset(indexesE[0], 0, indexesSize);
             Round<1, EDGES_B/4, EDGES_B/4><<<tp.trim.blocks, tp.trim.tpb>>>(round+1, (const uint2 *)bufferB, (uint2 *)bufferA, indexesE[1], indexesE[0]);
             if (abort) return false;
+#if ROO_VERBOSE
+            live_edges<<<1,1>>>(round+1, indexesE[0], indexesE[1]);
+#endif
         }
 
         cudaMemset(indexesE[1], 0, indexesSize);
