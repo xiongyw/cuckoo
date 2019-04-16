@@ -631,21 +631,42 @@ struct edgetrimmer {
             if (abort) return false;
         }
 
+#if ROO_VERBOSE
+        u32 nr_edges = 0;
+        for (u32 i = 0; i < NX2; i ++) nr_edges += indexesE[1][i];
+        printf("After Round(0): nr_edges=%d\n", nr_edges);
+#endif
+
         cudaMemset(indexesE[0], 0, indexesSize);
 
         Round<NB, EDGES_B/NB, EDGES_B/2><<<tp.trim.blocks, tp.trim.tpb>>>(1, (const uint2 *)bufferB, (uint2 *)bufferA, indexesE[1], indexesE[0]); // to .296
         if (abort) return false;
 
+#if ROO_VERBOSE
+        nr_edges = 0;
+        for (u32 i = 0; i < NX2; i ++) nr_edges += indexesE[0][i];
+        printf("After Round(1): nr_edges=%d\n", nr_edges);
+#endif
         cudaMemset(indexesE[1], 0, indexesSize);
 
         Round<1, EDGES_B/2, EDGES_A/4><<<tp.trim.blocks, tp.trim.tpb>>>(2, (const uint2 *)bufferA, (uint2 *)bufferB, indexesE[0], indexesE[1]); // to .176
         if (abort) return false;
 
+#if ROO_VERBOSE
+        nr_edges = 0;
+        for (u32 i = 0; i < NX2; i ++) nr_edges += indexesE[1][i];
+        printf("After Round(2): nr_edges=%d\n", nr_edges);
+#endif
         cudaMemset(indexesE[0], 0, indexesSize);
 
         Round<1, EDGES_A/4, EDGES_B/4><<<tp.trim.blocks, tp.trim.tpb>>>(3, (const uint2 *)bufferB, (uint2 *)bufferA, indexesE[1], indexesE[0]); // to .117
         if (abort) return false;
 
+#if ROO_VERBOSE
+        nr_edges = 0;
+        for (u32 i = 0; i < NX2; i ++) nr_edges += indexesE[0][i];
+        printf("After Round(3): nr_edges=%d\n", nr_edges);
+#endif
         cudaDeviceSynchronize();
 
         for (int round = 4; round < tp.ntrims; round += 2) {
