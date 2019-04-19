@@ -86,8 +86,9 @@ mean29x1:	cuckatoo.h  bitmap.hpp graph.hpp ../threads/barrier.hpp ../crypto/siph
 mean30x1:	cuckatoo.h  bitmap.hpp graph.hpp ../threads/barrier.hpp ../crypto/siphash.hpp mean.hpp mean.cpp Makefile
 	$(GPP) -o $@ -DNSIPHASH=1 -DEXPANDROUND=10 -DCOMPRESSROUND=22 -DEDGEBITS=30 mean.cpp $(BLAKE_2B_SRC) $(SIPHASH_SRC)
 
+# adding `-lineinfo -src-in-ptx`, then nsight can display source code with corresponding ptx/sass
 lcuda19:	../crypto/siphash.cuh lean.cu Makefile
-	$(NVCC) -o $@ -DEDGEBITS=19 -arch sm_35 lean.cu $(BLAKE_2B_SRC) $(SIPHASH_SRC)
+	$(NVCC) -lineinfo -src-in-ptx -o $@ -DEDGEBITS=19 -arch sm_35 lean.cu $(BLAKE_2B_SRC) $(SIPHASH_SRC)
 
 lcuda29:	../crypto/siphash.cuh lean.cu Makefile
 	$(NVCC) -o $@ -DEDGEBITS=29 -arch sm_35 lean.cu $(BLAKE_2B_SRC) $(SIPHASH_SRC)
@@ -97,6 +98,12 @@ lcuda30:	../crypto/siphash.cuh lean.cu Makefile
 
 lcuda31:	../crypto/siphash.cuh lean.cu Makefile
 	$(NVCC) -o $@ -DEDGEBITS=31 -arch sm_35 lean.cu $(BLAKE_2B_SRC) $(SIPHASH_SRC)
+
+lcuda32:	../crypto/siphash.cuh lean.cu Makefile
+	$(NVCC) -o $@ -DEDGEBITS=32 -arch sm_35 lean.cu $(BLAKE_2B_SRC) $(SIPHASH_SRC)
+
+lcuda33:	../crypto/siphash.cuh lean.cu Makefile
+	$(NVCC) -o $@ -DEDGEBITS=33 -arch sm_35 lean.cu $(BLAKE_2B_SRC) $(SIPHASH_SRC)
 
 cuda19:		../crypto/siphash.cuh mean.cu Makefile
 	$(NVCC) -o $@ -DNEPS_A=512 -DNEPS_B=384 -DIDXSHIFT=6 -DEDGEBITS=19 -arch sm_35 mean.cu $(BLAKE_2B_SRC) $(SIPHASH_SRC)

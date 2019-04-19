@@ -372,7 +372,11 @@ __global__ void live_edges(int round, const u32* idx0, const u32* idx1) {
         }
         pct0 = (float)nr_edges0 / NEDGES;
         pct1 = (float)nr_edges1 / NEDGES;
-        printf("After round %3d, NEDGES=%08x, nr_edges0=%08x (%.6f), nr_edges1=%08x (%.6f)\n", round, NEDGES, nr_edges0, pct0, nr_edges1, pct1);
+        if (round & 1) {
+            printf("After round %3d, NEDGES=%08x, nr_edges=%08x (%.6f)\n", round, NEDGES, nr_edges1, pct1);
+        } else {
+            printf("After round %3d, NEDGES=%08x, nr_edges=%08x (%.6f)\n", round, NEDGES, nr_edges0, pct0);
+        }
     }
 }
 #endif
@@ -657,6 +661,7 @@ struct edgetrimmer {
             live_edges<<<1,1>>>(0, indexesE[0], indexesE[1]);
 #endif
 
+        // return 0; // time 53%
 
         cudaMemset(indexesE[0], 0, indexesSize);
 
@@ -665,8 +670,9 @@ struct edgetrimmer {
 #if ROO_VERBOSE
         live_edges<<<1,1>>>(1, indexesE[0], indexesE[1]);
 #endif
-
         cudaMemset(indexesE[1], 0, indexesSize);
+
+        // return 0;  // about 61% run time
 
         Round<1, EDGES_B/2, EDGES_A/4><<<tp.trim.blocks, tp.trim.tpb>>>(2, (const uint2 *)bufferA, (uint2 *)bufferB, indexesE[0], indexesE[1]); // to .176
         if (abort) return false;
@@ -683,6 +689,8 @@ struct edgetrimmer {
 #endif
 
         cudaDeviceSynchronize();
+
+        //return 0;  // about 70% time
 
         for (int round = 4; round < tp.ntrims; round += 2) {
             cudaMemset(indexesE[1], 0, indexesSize);
