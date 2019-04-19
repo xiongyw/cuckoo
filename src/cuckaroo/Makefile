@@ -53,8 +53,10 @@ mean29x1:	cuckaroo.hpp  bitmap.hpp graph.hpp ../threads/barrier.hpp ../crypto/si
 mean30x1:	cuckaroo.hpp  bitmap.hpp graph.hpp ../threads/barrier.hpp ../crypto/siphash.hpp mean.hpp mean.cpp Makefile
 	$(GPP) -o $@ -DNSIPHASH=1 -DEXPANDROUND=10 -DCOMPRESSROUND=22 -DEDGEBITS=30 mean.cpp $(BLAKE_2B_SRC) $(SIPHASH_SRC)
 
+# `-lineinfo -src-in-ptx` allows Nsight show sass-ptx, source-sass pairs, also need to set option in nsight UI:
+# Tools->Option->Source lookup: add path to the source
 cuda19:		../crypto/siphash.cuh compress.hpp graph.hpp mean.cu Makefile
-	$(NVCC) -o $@ -DEPS_A=4 -DEPS_B=3 -DIDXSHIFT=2 -DEDGEBITS=19 -arch sm_35 mean.cu $(BLAKE_2B_SRC) $(SIPHASH_SRC)
+	$(NVCC) -lineinfo -src-in-ptx -o $@ -DEPS_A=4 -DEPS_B=3 -DIDXSHIFT=2 -DEDGEBITS=19 -arch sm_35 mean.cu $(BLAKE_2B_SRC) $(SIPHASH_SRC)
 
 # ./cuda29 -n 671
 cuda29:		../crypto/siphash.cuh compress.hpp graph.hpp mean.cu Makefile
