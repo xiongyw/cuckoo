@@ -11,7 +11,7 @@
 #include "../crypto/siphash.cuh"
 #include "../crypto/blake2.h"
 
-#define ROO_VERBOSE  0
+#define ROO_VERBOSE  1
 
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -137,6 +137,11 @@ __global__ void SeedA(const siphash_keys &sipkeys, ulonglong4 * __restrict__ buf
     const int gid = group * dim + lid;    // current thread's global idx
     const int nthreads = gridDim.x * dim; // total number of threads
     const int FLUSHA2 = 2*FLUSHA;         // why dobule? search ROWS_LIMIT_LOSSES for reasoning on this.
+
+#if ROO_VERBOSE
+    if (group== 0 && lid == 0)
+        printf("SeedA(): maxOut=%d, gridDim.x=%d, blockDim.x=%d\n", maxOut, gridDim.x, blockDim.x);
+#endif
 
 #if 0
     printf("SeedA(): group=%4d, dim=%3d, lid=%3d, gid=%8d, nthreads=%d, FLUSHA=%d\n",
@@ -270,6 +275,11 @@ __global__ void SeedB(const uint2 * __restrict__ source, ulonglong4 * __restrict
     __shared__ uint2 tmp[NX][FLUSHB2];
     const int TMPPERLL4 = sizeof(ulonglong4) / sizeof(uint2);
     __shared__ int counters[NX];
+
+#if ROO_VERBOSE
+    if (group== 0 && lid == 0)
+        printf("SeedB(): maxOut=%d, gridDim.x=%d, blockDim.x=%d\n", maxOut, gridDim.x, blockDim.x);
+#endif
 
     for (int col = lid; col < NX; col += dim)
         counters[col] = 0;
@@ -416,6 +426,11 @@ __global__ void Round(const int round, const uint2 * __restrict__ src, uint2 * _
     const int lid = threadIdx.x;
     const int COUNTERWORDS = NZ / 16; // 16 2-bit counters per 32-bit word
 
+#if ROO_VERBOSE
+    if (group== 0 && lid == 0)
+        printf("Round(round=%d): NP=%d, maxIn=%d, maxOut=%d, gridDim.x=%d, blockDim.x=%d\n", round, NP, maxIn, maxOut, gridDim.x, blockDim.x);
+#endif
+
     __shared__ u32 ecounters[COUNTERWORDS];
 
     for (int i = lid; i < COUNTERWORDS; i += dim)
@@ -477,6 +492,11 @@ __global__ void Tail(const uint2 *source, uint2 *destination, const u32 *srcIdx,
     int myEdges = srcIdx[group];
     __shared__ int destIdx;
 
+#if ROO_VERBOSE
+    if (group== 0 && lid == 0)
+        printf("Tail(): maxIn=%d, gridDim.x=%d, blockDim.x=%d\n", maxIn, gridDim.x, blockDim.x);
+#endif
+
     if (lid == 0)
         destIdx = atomicAdd(dstIdx, myEdges);
     __syncthreads();
@@ -506,6 +526,11 @@ __global__ void Recovery(const siphash_keys &sipkeys, ulonglong4 *buffer, int *i
     const int loops = NEDGES / nthreads;
     __shared__ u32 nonces[PROOFSIZE];
     u64 buf[EDGE_BLOCK_SIZE];
+
+#if ROO_VERBOSE
+    if (blockIdx.x == 0 && lid == 0)
+        printf("Recovery(): gridDim.x=%d, blockDim.x=%d\n", gridDim.x, blockDim.x);
+#endif
 
     if (lid < PROOFSIZE) nonces[lid] = 0;
     __syncthreads();
@@ -642,10 +667,14 @@ struct edgetrimmer {
             if (abort) return false;
         }
 
+#if ROO_VERBOSE
+        live_edges<<<1,1>>>(-1, indexesE[0], indexesE[1]);
+#endif
+
         checkCudaErrors(cudaDeviceSynchronize()); cudaEventRecord(stop, NULL);
         cudaEventSynchronize(stop); cudaEventElapsedTime(&durationB, start, stop);
         checkCudaErrors(cudaEventDestroy(start)); checkCudaErrors(cudaEventDestroy(stop));
-        print_log("Seeding completed in %.0f + %.0f ms\n", durationA, durationB);
+        //print_log("Seeding completed in %.0f + %.0f ms\n", durationA, durationB);
         if (abort) return false;
 
         for (u32 i = 0; i < NB; i++) cudaMemset(indexesE[1+i], 0, indexesSize);
@@ -658,7 +687,9 @@ struct edgetrimmer {
             if (abort) return false;
         }
 #if ROO_VERBOSE
-            live_edges<<<1,1>>>(0, indexesE[0], indexesE[1]);
+        //live_edges<<<1,1>>>(0, indexesE[0], indexesE[1]);
+        // note that the edge report from live_deges() is not correct for round 0 (the logic is a bit complex, not bother to implement that).
+        print_log("round 0 has two stages, num of edge drops to 63.2%% and 31.6%% respectively\n");
 #endif
 
         // return 0; // time 53%
