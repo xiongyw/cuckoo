@@ -12,6 +12,8 @@
 #include "../crypto/blake2.h"
 
 #define ROO_VERBOSE  1
+#define SINGLE_BLOCK 1   // only run one block which handles its 2^29/4096 edges
+#define NULL_SIPKEYS 1   // force set sipkeys to 0
 
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -171,7 +173,11 @@ __global__ void SeedA(const siphash_keys &sipkeys, ulonglong4 * __restrict__ buf
     /* the column for the current block to write to */
     const int col = group % NX;
     /* edges per thread */
+#if SINGLE_BLOCK
+    const int loops = 512; // assuming THREADS_HAVE_EDGES checked
+#else
     const int loops = NEDGES / nthreads; // assuming THREADS_HAVE_EDGES checked
+#endif
 
     for (int blk = 0; blk < loops; blk += EDGE_BLOCK_SIZE) { // blk is count of hashed edges of the current thread
 
@@ -185,6 +191,12 @@ __global__ void SeedA(const siphash_keys &sipkeys, ulonglong4 * __restrict__ buf
             u64 edge = buf[e] ^ last;  // finialize the siphash() to get the two nodes of an edge
             u32 node0 = edge & EDGEMASK;          // u
             u32 node1 = (edge >> 32) & EDGEMASK;  // v
+#if SINGLE_BLOCK
+            // print some edges to verify correctness of dipblock()
+            if (gid == 0 && blk == 0 && e < 10) {
+                printf("micro-nonce=%d, e=%d: u=0x%08x, v=0x%08x\n", nonce0, e, node0, node1);
+            }
+#endif
             int row = node0 >> YZBITS;            // uX
             /*
              * atomicAdd(): when a thread executes this operation, a memory address is read, has the value of ‘val’ added
@@ -386,6 +398,41 @@ __global__ void live_edges(int round, const u32* idx0, const u32* idx1) {
             printf("After round %3d, NEDGES=%08x, nr_edges=%08x (%.6f)\n", round, NEDGES, nr_edges1, pct1);
         } else {
             printf("After round %3d, NEDGES=%08x, nr_edges=%08x (%.6f)\n", round, NEDGES, nr_edges0, pct0);
+        }
+    }
+}
+
+__global__ void print_indexs(const u32* idx)
+{
+    const int group = blockIdx.x;
+    const int dim = blockDim.x;
+    const int lid = threadIdx.x;
+    int gid = group * dim + lid;
+
+    if (gid == 0) {
+        for (int row = 0; row < NX; row ++) {
+            printf("%2d: ", row);
+            for (int col = 0; col < NX; col ++) {
+                printf("%6d ", idx[row * NX + col]);
+            }
+            printf("\n");
+        }
+    }
+}
+
+__global__ void print_bucket(const u32* buffer, const u32 bucket_max_sz_word, const u32 bucket_row, const u32 bucket_col, const u32 nr_edges_to_print)
+{
+    const int group = blockIdx.x;
+    const int dim = blockDim.x;
+    const int lid = threadIdx.x;
+    int gid = group * dim + lid;
+
+    if (gid == 0) {
+        u32 bucket_idx = bucket_row * NX + bucket_col;
+        const u32* p = buffer + bucket_max_sz_word * bucket_idx;
+        printf("bucket[row=%d][col=%d]:\n", bucket_row, bucket_col);
+        for (int i = 0; i < nr_edges_to_print; i ++) {
+            printf("%6d: 0x%08x, 0x%08x (uX=%d)\n", i, p[i*2], p[i*2+1], p[i*2]>>YZBITS);
         }
     }
 }
@@ -651,7 +698,17 @@ struct edgetrimmer {
 #endif
 
         cudaMemset(indexesE[1], 0, indexesSize);
+#if SINGLE_BLOCK
+        SeedA<EDGES_A><<<1, tp.genA.tpb>>>(*dipkeys, (ulonglong4*)bufferAB, indexesE[1]);
+#else
         SeedA<EDGES_A><<<tp.genA.blocks, tp.genA.tpb>>>(*dipkeys, (ulonglong4*)bufferAB, indexesE[1]);
+#endif
+
+#if ROO_VERBOSE
+        print_indexs<<<1, 1>>>(indexesE[1]);
+        print_bucket<<<1, 1>>>((u32*)bufferAB, EDGES_A * 2, 0/*row*/, 0/*col*/, 20/*nr_edges*/);
+        print_bucket<<<1, 1>>>((u32*)bufferAB, EDGES_A * 2, 10/*row*/, 0/*col*/, 20/*nr_edges*/);
+#endif
 
         checkCudaErrors(cudaDeviceSynchronize()); cudaEventRecord(stop, NULL);
         cudaEventSynchronize(stop); cudaEventElapsedTime(&durationA, start, stop);
@@ -674,7 +731,7 @@ struct edgetrimmer {
         checkCudaErrors(cudaDeviceSynchronize()); cudaEventRecord(stop, NULL);
         cudaEventSynchronize(stop); cudaEventElapsedTime(&durationB, start, stop);
         checkCudaErrors(cudaEventDestroy(start)); checkCudaErrors(cudaEventDestroy(stop));
-        //print_log("Seeding completed in %.0f + %.0f ms\n", durationA, durationB);
+        print_log("Seeding completed in %.0f + %.0f ms\n", durationA, durationB);
         if (abort) return false;
 
         for (u32 i = 0; i < NB; i++) cudaMemset(indexesE[1+i], 0, indexesSize);
@@ -762,9 +819,17 @@ struct solver_ctx {
     }
 
     void setheadernonce(char * const headernonce, const u32 len, const u32 nonce) {
+	printf("setheadernonce(): headernonce=%s, len=%d, nonce=0x%08x, mutatenonce=%d\n", headernonce, len, nonce, mutatenonce);
+	//printf("setheadernonce(): sipkeys=%d\n", trimmer.sipkeys);
         if (mutatenonce)
             ((u32 *)headernonce)[len/sizeof(u32)-1] = htole32(nonce); // place nonce at end
         setheader(headernonce, len, &trimmer.sipkeys);
+#if NULL_SIPKEYS
+        trimmer.sipkeys.k0 = 0;
+        trimmer.sipkeys.k1 = 0;
+        trimmer.sipkeys.k2 = 0;
+        trimmer.sipkeys.k3 = 0;
+#endif
         sols.clear();
     }
     ~solver_ctx() {
@@ -989,6 +1054,8 @@ int main(int argc, char **argv) {
     char header[HEADERLEN];
     u32 len;
     int c;
+
+    printf("EDGES_A=%d, EDGES_B=%d\n", EDGES_A, EDGES_B);
 
     // set defaults
     SolverParams params;
