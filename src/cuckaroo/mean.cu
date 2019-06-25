@@ -12,8 +12,8 @@
 #include "../crypto/blake2.h"
 
 #define ROO_VERBOSE  1
-#define SINGLE_BLOCK 1   // only run one block which handles its 2^29/4096 edges
-#define NULL_SIPKEYS 1   // force set sipkeys to 0
+#define SINGLE_BLOCK 0   // only run one block which handles its 2^29/4096 edges
+#define NULL_SIPKEYS 0   // force set sipkeys to 0
 
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -192,9 +192,12 @@ __global__ void SeedA(const siphash_keys &sipkeys, ulonglong4 * __restrict__ buf
             u32 node0 = edge & EDGEMASK;          // u
             u32 node1 = (edge >> 32) & EDGEMASK;  // v
 #if SINGLE_BLOCK
+            if (node1 == 0x6a32577) printf("gotit: nonce=%d: u=0x%08x, v=%08x\n", nonce0, node0, node1);
             // print some edges to verify correctness of dipblock()
-            if (gid == 0 && blk == 0 && e < 10) {
-                printf("micro-nonce=%d, e=%d: u=0x%08x, v=0x%08x\n", nonce0, e, node0, node1);
+            if (gid == 0 && blk == 0 && e < EDGE_BLOCK_SIZE) {
+                //printf("micro-nonce=%d, last_lo=0x%08x, last_hi=0x%08x\n", nonce0, (uint32_t)last, (uint32_t)(last >> 32));
+                //printf("micro-nonce=%d, e=%d, buf[%d]={lo=%08x, hi=0x%08x}\n", nonce0, e, e, (uint32_t)buf[e], (uint32_t)(buf[e]>>32));
+                printf("micro-nonce=%d, e=%2d: u=0x%08x, v=0x%08x\n", nonce0, e, node0, node1);
             }
 #endif
             int row = node0 >> YZBITS;            // uX
@@ -217,6 +220,14 @@ __global__ void SeedA(const siphash_keys &sipkeys, ulonglong4 * __restrict__ buf
                 int nflush = localIdx - newCount;
                 u32 grp = row * NX + col; // bucket idx. it implies the buckets in buffer is aranged row by row.
                 int cnt = min((int)atomicAdd(indexes + grp, nflush), (int)(maxOut - nflush)); // cnt is the current index of the dst bucket
+#if SINGLE_BLOCK
+                if (grp == 0) {
+                  printf("gid=%3d: cnt=0x%08x, nflush=%d, counter=%d, newCount=%d\n", gid, cnt, nflush, counters[row], newCount);
+                  for (int k = 0; k < counters[row]; k ++) {
+                      printf("%2d: 0x%08x, 0x%08x\n", k, tmp[row][k].x, tmp[row][k].y);
+                  }
+                }
+#endif
                 /* move from share mem to global buf */
                 for (int i = 0; i < nflush; i += TMPPERLL4) {
                     buffer[((u64)grp * maxOut + cnt + i) / TMPPERLL4] = *(ulonglong4 *)(&tmp[row][i]);
@@ -699,7 +710,7 @@ struct edgetrimmer {
 
         cudaMemset(indexesE[1], 0, indexesSize);
 #if SINGLE_BLOCK
-        SeedA<EDGES_A><<<1, tp.genA.tpb>>>(*dipkeys, (ulonglong4*)bufferAB, indexesE[1]);
+        SeedA<EDGES_A><<<64, tp.genA.tpb>>>(*dipkeys, (ulonglong4*)bufferAB, indexesE[1]);
 #else
         SeedA<EDGES_A><<<tp.genA.blocks, tp.genA.tpb>>>(*dipkeys, (ulonglong4*)bufferAB, indexesE[1]);
 #endif
