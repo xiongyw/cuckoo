@@ -11,9 +11,13 @@
 #include "../crypto/siphash.cuh"
 #include "../crypto/blake2.h"
 
-#define ROO_VERBOSE  1
-#define SINGLE_BLOCK 0   // only run one block which handles its 2^29/4096 edges
+#define ROO_VERBOSE            1
+#define SEEDA_SINGLE_BLOCK     0   // only run one block which handles its 2^29/4096 edges
+#define ROUND0_SINGLE_BLOCK    0   // only run one block for round 0
 #define NULL_SIPKEYS 0   // force set sipkeys to 0
+#define DUMP_SEEDA   0   // dump bucket/index content after SeedA
+#define DUMP_SEEDB   0   // dump bucket/index content after SeedB
+#define DUMP_ROUND0  1   // dump bucket/index content after Round(0)
 
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -173,7 +177,7 @@ __global__ void SeedA(const siphash_keys &sipkeys, ulonglong4 * __restrict__ buf
     /* the column for the current block to write to */
     const int col = group % NX;
     /* edges per thread */
-#if SINGLE_BLOCK
+#if SEEDA_SINGLE_BLOCK
     const int loops = 512; // assuming THREADS_HAVE_EDGES checked
 #else
     const int loops = NEDGES / nthreads; // assuming THREADS_HAVE_EDGES checked
@@ -191,7 +195,7 @@ __global__ void SeedA(const siphash_keys &sipkeys, ulonglong4 * __restrict__ buf
             u64 edge = buf[e] ^ last;  // finialize the siphash() to get the two nodes of an edge
             u32 node0 = edge & EDGEMASK;          // u
             u32 node1 = (edge >> 32) & EDGEMASK;  // v
-#if SINGLE_BLOCK
+#if SEEDA_SINGLE_BLOCK
             if (node1 == 0x6a32577) printf("gotit: nonce=%d: u=0x%08x, v=%08x\n", nonce0, node0, node1);
             // print some edges to verify correctness of dipblock()
             if (gid == 0 && blk == 0 && e < EDGE_BLOCK_SIZE) {
@@ -220,7 +224,7 @@ __global__ void SeedA(const siphash_keys &sipkeys, ulonglong4 * __restrict__ buf
                 int nflush = localIdx - newCount;
                 u32 grp = row * NX + col; // bucket idx. it implies the buckets in buffer is aranged row by row.
                 int cnt = min((int)atomicAdd(indexes + grp, nflush), (int)(maxOut - nflush)); // cnt is the current index of the dst bucket
-#if SINGLE_BLOCK
+#if SEEDA_SINGLE_BLOCK
                 if (grp == 0) {
                   printf("gid=%3d: cnt=0x%08x, nflush=%d, counter=%d, newCount=%d\n", gid, cnt, nflush, counters[row], newCount);
                   for (int k = 0; k < counters[row]; k ++) {
@@ -424,7 +428,7 @@ __global__ void print_indexs(const u32* idx)
         for (int row = 0; row < NX; row ++) {
             printf("%2d: ", row);
             for (int col = 0; col < NX; col ++) {
-                printf("%6d ", idx[row * NX + col]);
+                printf("%2d ", idx[row * NX + col]);
             }
             printf("\n");
         }
@@ -709,23 +713,47 @@ struct edgetrimmer {
 #endif
 
         cudaMemset(indexesE[1], 0, indexesSize);
-#if SINGLE_BLOCK
+#if SEEDA_SINGLE_BLOCK
         SeedA<EDGES_A><<<64, tp.genA.tpb>>>(*dipkeys, (ulonglong4*)bufferAB, indexesE[1]);
 #else
         SeedA<EDGES_A><<<tp.genA.blocks, tp.genA.tpb>>>(*dipkeys, (ulonglong4*)bufferAB, indexesE[1]);
 #endif
-
-#if ROO_VERBOSE
-        print_indexs<<<1, 1>>>(indexesE[1]);
-        print_bucket<<<1, 1>>>((u32*)bufferAB, EDGES_A * 2, 0/*row*/, 0/*col*/, 20/*nr_edges*/);
-        print_bucket<<<1, 1>>>((u32*)bufferAB, EDGES_A * 2, 10/*row*/, 0/*col*/, 20/*nr_edges*/);
-#endif
-
         checkCudaErrors(cudaDeviceSynchronize()); cudaEventRecord(stop, NULL);
         cudaEventSynchronize(stop); cudaEventElapsedTime(&durationA, start, stop);
         if (abort) return false;
-        cudaEventRecord(start, NULL);
 
+#if ROO_VERBOSE
+        //print_indexs<<<1, 1>>>(indexesE[1]);
+        //print_bucket<<<1, 1>>>((u32*)bufferAB, EDGES_A * 2, 0/*row*/, 0/*col*/, 20/*nr_edges*/);
+        //print_bucket<<<1, 1>>>((u32*)bufferAB, EDGES_A * 2, 10/*row*/, 0/*col*/, 20/*nr_edges*/);
+#endif
+
+#if DUMP_SEEDA
+#define BUFFAB_FILE    "SeedA-bufferAB.bin"
+#define INDEXE1_FILE   "SeedA-indexesE1.bin"
+        {
+            uint8_t* tmp = (uint8_t*)malloc(sizeA);
+            assert(tmp);
+
+            // bufferA
+            //for (int i = 0; i < NX; i ++) print_bucket<<<1, 1>>>((u32*)bufferA, EDGES_A * 2, i/*row*/, 0/*col*/, EDGES_A/*nr_edges*/);
+            cudaMemcpy(tmp, bufferAB, sizeA, cudaMemcpyDeviceToHost);
+            FILE* fp = fopen(BUFFAB_FILE, "wb");
+            fwrite(tmp, 1, sizeA, fp);
+            fclose(fp);
+
+            // indexsE[1]
+            //print_indexs<<<1,1>>>((uint32_t*)indexesE[1]);
+            cudaMemcpy(tmp, indexesE[1], indexesSize, cudaMemcpyDeviceToHost);
+            fp = fopen(INDEXE1_FILE, "wb");
+            fwrite(tmp, 1, indexesSize, fp);
+            fclose(fp);
+
+            free(tmp);
+        }
+#endif
+
+        cudaEventRecord(start, NULL);
         cudaMemset(indexesE[0], 0, indexesSize);
 
         u32 qA = sizeA/NA;
@@ -735,9 +763,6 @@ struct edgetrimmer {
             if (abort) return false;
         }
 
-#if ROO_VERBOSE
-        live_edges<<<1,1>>>(-1, indexesE[0], indexesE[1]);
-#endif
 
         checkCudaErrors(cudaDeviceSynchronize()); cudaEventRecord(stop, NULL);
         cudaEventSynchronize(stop); cudaEventElapsedTime(&durationB, start, stop);
@@ -745,21 +770,81 @@ struct edgetrimmer {
         print_log("Seeding completed in %.0f + %.0f ms\n", durationA, durationB);
         if (abort) return false;
 
+#if ROO_VERBOSE
+        live_edges<<<1,1>>>(-1, indexesE[0], indexesE[1]);
+#endif
+
+#if DUMP_SEEDB
+#define BUFFA_FILE     "SeedB-bufferA.bin"
+#define INDEXE0_FILE   "SeedB-indexesE0.bin"
+
+        {
+            uint8_t* tmp = (uint8_t*)malloc(sizeA);
+            assert(tmp);
+
+            // bufferA
+            //printf("EDGES_A=%d\n", EDGES_A); // 136192
+            //for (int i = 0; i < NX; i ++) print_bucket<<<1, 1>>>((u32*)bufferA, EDGES_A * 2, i/*row*/, 0/*col*/, EDGES_A/*nr_edges*/);
+            cudaMemcpy(tmp, bufferA, sizeA, cudaMemcpyDeviceToHost);
+            FILE* fp = fopen(BUFFA_FILE, "wb");
+            fwrite(tmp, 1, sizeA, fp);
+            fclose(fp);
+
+            // indexsE[0]
+            print_indexs<<<1,1>>>((uint32_t*)indexesE[0]);
+            cudaMemcpy(tmp, indexesE[0], indexesSize, cudaMemcpyDeviceToHost);
+            fp = fopen(INDEXE0_FILE, "wb");
+            fwrite(tmp, 1, indexesSize, fp);
+            fclose(fp);
+
+            free(tmp);
+        }
+#endif
         for (u32 i = 0; i < NB; i++) cudaMemset(indexesE[1+i], 0, indexesSize);
 
         qA = sizeA/NB;
         const size_t qB = sizeB/NB;
         qE = NX2 / NB;
         for (u32 i = NB; i--; ) {
+#if ROUND0_SINGLE_BLOCK
+            printf("round 0:%d\n", i);
+            Round<1, EDGES_A, EDGES_B/NB><<<2048, tp.trim.tpb>>>(0, (uint2*)(bufferA+i*qA), (uint2*)(bufferB+i*qB), indexesE[0]+i*qE, indexesE[1+i]);
+            print_indexs<<<1,1>>>((uint32_t*)indexesE[1+i]);
+#else
             Round<1, EDGES_A, EDGES_B/NB><<<tp.trim.blocks/NB, tp.trim.tpb>>>(0, (uint2*)(bufferA+i*qA), (uint2*)(bufferB+i*qB), indexesE[0]+i*qE, indexesE[1+i]); // to .632, then to .316
+#endif
             if (abort) return false;
         }
+
 #if ROO_VERBOSE
         //live_edges<<<1,1>>>(0, indexesE[0], indexesE[1]);
         // note that the edge report from live_deges() is not correct for round 0 (the logic is a bit complex, not bother to implement that).
         print_log("round 0 has two stages, num of edge drops to 63.2%% and 31.6%% respectively\n");
 #endif
 
+#if DUMP_ROUND0
+#define ROUND0_INDEXE1_FILE     "Round0-indexesE1.bin"
+#define ROUND0_INDEXE2_FILE     "Round0-indexesE2.bin"
+
+        {
+            uint8_t* tmp = (uint8_t*)malloc(indexesSize);
+            assert(tmp);
+
+            print_indexs<<<1,1>>>((uint32_t*)indexesE[1]);
+            cudaMemcpy(tmp, indexesE[1], indexesSize, cudaMemcpyDeviceToHost);
+            FILE* fp = fopen(ROUND0_INDEXE1_FILE, "wb");
+            fwrite(tmp, 1, indexesSize, fp);
+            fclose(fp);
+
+            print_indexs<<<1,1>>>((uint32_t*)indexesE[2]);
+            cudaMemcpy(tmp, indexesE[2], indexesSize, cudaMemcpyDeviceToHost);
+            fp = fopen(ROUND0_INDEXE2_FILE, "wb");
+            fwrite(tmp, 1, indexesSize, fp);
+            fclose(fp);
+
+            free(tmp);
+        }
+#endif
         // return 0; // time 53%
 
         cudaMemset(indexesE[0], 0, indexesSize);
