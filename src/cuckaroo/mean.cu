@@ -14,10 +14,14 @@
 #define ROO_VERBOSE            1
 #define SEEDA_SINGLE_BLOCK     0   // only run one block which handles its 2^29/4096 edges
 #define ROUND0_SINGLE_BLOCK    0   // only run one block for round 0
-#define NULL_SIPKEYS 0   // force set sipkeys to 0
-#define DUMP_SEEDA   0   // dump bucket/index content after SeedA
-#define DUMP_SEEDB   0   // dump bucket/index content after SeedB
-#define DUMP_ROUND0  1   // dump bucket/index content after Round(0)
+#define NULL_SIPKEYS           0   // force set sipkeys to 0
+
+#define DUMP_SEEDA             0   // dump bucket/index content after SeedA
+#define DUMP_SEEDB             0   // dump bucket/index content after SeedB
+#define DUMP_ROUND0            0   // dump bucket/index content after Round(0)
+#define DUMP_ROUND1            0   // dump bucket/index content after Round(1)
+#define DUMP_ROUND175          0   // dump bucket/index content after Round()
+#define DUMP_TAIL              1   // dump bufferB content after Tail()
 
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -854,6 +858,22 @@ struct edgetrimmer {
 #if ROO_VERBOSE
         live_edges<<<1,1>>>(1, indexesE[0], indexesE[1]);
 #endif
+#if DUMP_ROUND1
+#define ROUND1_INDEXE_FILE     "Round1-indexesE0.bin"
+
+        {
+            uint8_t* tmp = (uint8_t*)malloc(indexesSize);
+            assert(tmp);
+
+            print_indexs<<<1,1>>>((uint32_t*)indexesE[0]);
+            cudaMemcpy(tmp, indexesE[0], indexesSize, cudaMemcpyDeviceToHost);
+            FILE* fp = fopen(ROUND1_INDEXE_FILE, "wb");
+            fwrite(tmp, 1, indexesSize, fp);
+            fclose(fp);
+
+            free(tmp);
+        }
+#endif
         cudaMemset(indexesE[1], 0, indexesSize);
 
         // return 0;  // about 61% run time
@@ -891,12 +911,58 @@ struct edgetrimmer {
 #endif
         }
 
+#if DUMP_ROUND175
+#define ROUND175_INDEXE_FILE     "Round175-indexesE0.bin"
+#define ROUND175_BUFFA_FILE      "Round175-bufferA.bin"
+        {
+            uint8_t* tmp = (uint8_t*)malloc(sizeA);
+            assert(tmp);
+
+            print_indexs<<<1,1>>>((uint32_t*)indexesE[0]);
+            cudaMemcpy(tmp, indexesE[0], indexesSize, cudaMemcpyDeviceToHost);
+            FILE* fp = fopen(ROUND175_INDEXE_FILE, "wb");
+            fwrite(tmp, 1, indexesSize, fp);
+            fclose(fp);
+
+            cudaMemcpy(tmp, bufferA, sizeA, cudaMemcpyDeviceToHost);
+            fp = fopen(ROUND175_BUFFA_FILE, "wb");
+            fwrite(tmp, 1, sizeA, fp);
+            fclose(fp);
+            free(tmp);
+        }
+#endif
         cudaMemset(indexesE[1], 0, indexesSize);
         cudaDeviceSynchronize();
 
         Tail<EDGES_B/4><<<tp.tail.blocks, tp.tail.tpb>>>((const uint2 *)bufferA, (uint2 *)bufferB, indexesE[0], indexesE[1]);
         cudaMemcpy(&nedges, indexesE[1], sizeof(u32), cudaMemcpyDeviceToHost);
         cudaDeviceSynchronize();
+
+
+#if DUMP_TAIL
+#define TAIL_BUFFB_FILE      "Tail-bufferB.bin"
+        {
+            uint8_t* tmp = (uint8_t*)malloc(sizeB);
+            assert(tmp);
+
+            cudaMemcpy(tmp, indexesE[0], indexesSize, cudaMemcpyDeviceToHost);
+            uint32_t sum = 0;
+            for (int i = 0; i < NX2; i ++) {
+                sum += ((uint32_t*)tmp)[i];
+            }
+
+            printf("after Tail(): nedges = %d, indexesE[0] sum=%d\n", nedges, sum);
+            assert(nedges == sum);
+
+            cudaMemcpy(tmp, bufferB, sizeB, cudaMemcpyDeviceToHost);
+            FILE* fp = fopen(TAIL_BUFFB_FILE, "wb");
+            fwrite(tmp, 1, nedges * sizeof(uint2), fp);
+            fclose(fp);
+
+            free(tmp);
+        }
+#endif
+
         return nedges;
     }
 };
