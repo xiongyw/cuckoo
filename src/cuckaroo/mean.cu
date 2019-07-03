@@ -15,13 +15,15 @@
 #define SEEDA_SINGLE_BLOCK     0   // only run one block which handles its 2^29/4096 edges
 #define ROUND0_SINGLE_BLOCK    0   // only run one block for round 0
 #define NULL_SIPKEYS           0   // force set sipkeys to 0
+#define FLUSHA_TEST            1   // test to see which size of FLUSHA is absolutely enough
+#define FLUSHB_TEST            1   // test to see which size of FLUSHB is aboslutely enough
 
 #define DUMP_SEEDA             0   // dump bucket/index content after SeedA
 #define DUMP_SEEDB             0   // dump bucket/index content after SeedB
-#define DUMP_ROUND0            0   // dump bucket/index content after Round(0)
+#define DUMP_ROUND0            1   // dump bucket/index content after Round(0)
 #define DUMP_ROUND1            0   // dump bucket/index content after Round(1)
 #define DUMP_ROUND175          0   // dump bucket/index content after Round()
-#define DUMP_TAIL              1   // dump bufferB content after Tail()
+#define DUMP_TAIL              0   // dump bufferB content after Tail()
 
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -105,7 +107,11 @@ __device__ u32 endpoint(uint2 nodes, int uorv) {
 }
 
 #ifndef FLUSHA // should perhaps be in trimparams and passed as template parameter
+#if FLUSHA_TEST
+#define FLUSHA 32
+#else
 #define FLUSHA 16  /* for SeedA, number of edges to be batch-moved from shared mem to global buf */
+#endif
 #endif
 
 /*
@@ -214,7 +220,15 @@ __global__ void SeedA(const siphash_keys &sipkeys, ulonglong4 * __restrict__ buf
              * to it, and the result is written back to memory. The original value of the memory at location ‘address’
              * is returned to the thread.
              */
+#if FLUSHA_TEST
+            int counter0 = (int)atomicAdd(counters + row, 1);
+            if (counter0 >= FLUSHA2) {
+                printf("################ SeedA: possible edge lost. counter0=%d\n", counter0);
+            }
+            int counter = min(counter0, (int)(FLUSHA2-1)); // assuming ROWS_LIMIT_LOSSES checked
+#else
             int counter = min((int)atomicAdd(counters + row, 1), (int)(FLUSHA2-1)); // assuming ROWS_LIMIT_LOSSES checked
+#endif
             tmp[row][counter] = make_uint2(node0, node1);
             __syncthreads();
 
@@ -287,7 +301,11 @@ __device__ bool null(uint2 nodes) {
 }
 
 #ifndef FLUSHB
+#if FLUSHB_TEST
+#define FLUSHB 16
+#else
 #define FLUSHB 8
+#endif
 #endif
 
 /*
@@ -332,7 +350,16 @@ __global__ void SeedB(const uint2 * __restrict__ source, ulonglong4 * __restrict
             if (!null(edge)) {
                 u32 node1 = edge.x; // u
                 col = (node1 >> ZBITS) & XMASK; // uY
+
+#if FLUSHB_TEST
+                int counter0 = (int)atomicAdd(counters + col, 1); 
+                if (counter0 >= (FLUSHB2)) {
+                  printf("################ warning: possible lost edge. counter0=%d\n", counter0);
+                }
+                counter = min(counter0, (int)(FLUSHB2-1)); // assuming COLS_LIMIT_LOSSES checked
+#else
                 counter = min((int)atomicAdd(counters + col, 1), (int)(FLUSHB2-1)); // assuming COLS_LIMIT_LOSSES checked
+#endif
                 tmp[col][counter] = edge;
             }
         }
