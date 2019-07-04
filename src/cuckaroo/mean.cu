@@ -15,12 +15,14 @@
 #define SEEDA_SINGLE_BLOCK     0   // only run one block which handles its 2^29/4096 edges
 #define ROUND0_SINGLE_BLOCK    0   // only run one block for round 0
 #define NULL_SIPKEYS           0   // force set sipkeys to 0
-#define FLUSHA_TEST            1   // test to see which size of FLUSHA is absolutely enough
-#define FLUSHB_TEST            1   // test to see which size of FLUSHB is aboslutely enough
+#define TEST_FLUSHA            0   // show warning when tmp[][] buffer is not big enough causing edges lost
+#define TEST_FLUSHB            0   // show warning when tmp[][] buffer is not big enough causing edges lost
+#define DOUBLE_FLUSHA          1   // FLUSHA=32
+#define DOUBLE_FLUSHB          1   // FLUSHB=16
 
 #define DUMP_SEEDA             0   // dump bucket/index content after SeedA
 #define DUMP_SEEDB             0   // dump bucket/index content after SeedB
-#define DUMP_ROUND0            1   // dump bucket/index content after Round(0)
+#define DUMP_ROUND0            0   // dump bucket/index content after Round(0)
 #define DUMP_ROUND1            0   // dump bucket/index content after Round(1)
 #define DUMP_ROUND175          0   // dump bucket/index content after Round()
 #define DUMP_TAIL              0   // dump bufferB content after Tail()
@@ -107,7 +109,7 @@ __device__ u32 endpoint(uint2 nodes, int uorv) {
 }
 
 #ifndef FLUSHA // should perhaps be in trimparams and passed as template parameter
-#if FLUSHA_TEST
+#if DOUBLE_FLUSHA
 #define FLUSHA 32
 #else
 #define FLUSHA 16  /* for SeedA, number of edges to be batch-moved from shared mem to global buf */
@@ -220,10 +222,10 @@ __global__ void SeedA(const siphash_keys &sipkeys, ulonglong4 * __restrict__ buf
              * to it, and the result is written back to memory. The original value of the memory at location ‘address’
              * is returned to the thread.
              */
-#if FLUSHA_TEST
+#if TEST_FLUSHA
             int counter0 = (int)atomicAdd(counters + row, 1);
             if (counter0 >= FLUSHA2) {
-                printf("################ SeedA: possible edge lost. counter0=%d\n", counter0);
+                printf("################ SeedA(): possible edge lost. counter0=%d, FLUSHA2=%d\n", counter0, FLUSHA2);
             }
             int counter = min(counter0, (int)(FLUSHA2-1)); // assuming ROWS_LIMIT_LOSSES checked
 #else
@@ -301,7 +303,7 @@ __device__ bool null(uint2 nodes) {
 }
 
 #ifndef FLUSHB
-#if FLUSHB_TEST
+#if DOUBLE_FLUSHB
 #define FLUSHB 16
 #else
 #define FLUSHB 8
@@ -351,10 +353,10 @@ __global__ void SeedB(const uint2 * __restrict__ source, ulonglong4 * __restrict
                 u32 node1 = edge.x; // u
                 col = (node1 >> ZBITS) & XMASK; // uY
 
-#if FLUSHB_TEST
+#if TEST_FLUSHB
                 int counter0 = (int)atomicAdd(counters + col, 1); 
                 if (counter0 >= (FLUSHB2)) {
-                  printf("################ warning: possible lost edge. counter0=%d\n", counter0);
+                  printf("################ SeedB(): possible edge lost. counter0=%d, FLUSHB2=%d\n", counter0, FLUSHB2);
                 }
                 counter = min(counter0, (int)(FLUSHB2-1)); // assuming COLS_LIMIT_LOSSES checked
 #else
@@ -753,12 +755,6 @@ struct edgetrimmer {
         cudaEventSynchronize(stop); cudaEventElapsedTime(&durationA, start, stop);
         if (abort) return false;
 
-#if ROO_VERBOSE
-        //print_indexs<<<1, 1>>>(indexesE[1]);
-        //print_bucket<<<1, 1>>>((u32*)bufferAB, EDGES_A * 2, 0/*row*/, 0/*col*/, 20/*nr_edges*/);
-        //print_bucket<<<1, 1>>>((u32*)bufferAB, EDGES_A * 2, 10/*row*/, 0/*col*/, 20/*nr_edges*/);
-#endif
-
 #if DUMP_SEEDA
 #define BUFFAB_FILE    "SeedA-bufferAB.bin"
 #define INDEXE1_FILE   "SeedA-indexesE1.bin"
@@ -774,7 +770,8 @@ struct edgetrimmer {
             fclose(fp);
 
             // indexsE[1]
-            //print_indexs<<<1,1>>>((uint32_t*)indexesE[1]);
+            printf("indexesE[1] after SeedA():\n"); print_indexs<<<1,1>>>((uint32_t*)indexesE[1]);
+
             cudaMemcpy(tmp, indexesE[1], indexesSize, cudaMemcpyDeviceToHost);
             fp = fopen(INDEXE1_FILE, "wb");
             fwrite(tmp, 1, indexesSize, fp);
@@ -822,7 +819,8 @@ struct edgetrimmer {
             fclose(fp);
 
             // indexsE[0]
-            print_indexs<<<1,1>>>((uint32_t*)indexesE[0]);
+            printf("indexesE[0] after SeedB():\n"); print_indexs<<<1,1>>>((uint32_t*)indexesE[0]);
+
             cudaMemcpy(tmp, indexesE[0], indexesSize, cudaMemcpyDeviceToHost);
             fp = fopen(INDEXE0_FILE, "wb");
             fwrite(tmp, 1, indexesSize, fp);
@@ -836,7 +834,7 @@ struct edgetrimmer {
         qA = sizeA/NB;
         const size_t qB = sizeB/NB;
         qE = NX2 / NB;
-        for (u32 i = NB; i--; ) {
+        for (u32 i = NB; i--; ) { // i = {1, 0}
 #if ROUND0_SINGLE_BLOCK
             printf("round 0:%d\n", i);
             Round<1, EDGES_A, EDGES_B/NB><<<2048, tp.trim.tpb>>>(0, (uint2*)(bufferA+i*qA), (uint2*)(bufferB+i*qB), indexesE[0]+i*qE, indexesE[1+i]);
@@ -861,13 +859,13 @@ struct edgetrimmer {
             uint8_t* tmp = (uint8_t*)malloc(indexesSize);
             assert(tmp);
 
-            print_indexs<<<1,1>>>((uint32_t*)indexesE[1]);
+            printf("indexesE[1] after Round(0):\n"); print_indexs<<<1,1>>>((uint32_t*)indexesE[1]);
             cudaMemcpy(tmp, indexesE[1], indexesSize, cudaMemcpyDeviceToHost);
             FILE* fp = fopen(ROUND0_INDEXE1_FILE, "wb");
             fwrite(tmp, 1, indexesSize, fp);
             fclose(fp);
 
-            print_indexs<<<1,1>>>((uint32_t*)indexesE[2]);
+            printf("indexesE[2] after Round(0):\n"); print_indexs<<<1,1>>>((uint32_t*)indexesE[2]);
             cudaMemcpy(tmp, indexesE[2], indexesSize, cudaMemcpyDeviceToHost);
             fp = fopen(ROUND0_INDEXE2_FILE, "wb");
             fwrite(tmp, 1, indexesSize, fp);
@@ -892,7 +890,7 @@ struct edgetrimmer {
             uint8_t* tmp = (uint8_t*)malloc(indexesSize);
             assert(tmp);
 
-            print_indexs<<<1,1>>>((uint32_t*)indexesE[0]);
+            printf("indexesE[0] after Round(1):\n"); print_indexs<<<1,1>>>((uint32_t*)indexesE[0]);
             cudaMemcpy(tmp, indexesE[0], indexesSize, cudaMemcpyDeviceToHost);
             FILE* fp = fopen(ROUND1_INDEXE_FILE, "wb");
             fwrite(tmp, 1, indexesSize, fp);
@@ -945,7 +943,7 @@ struct edgetrimmer {
             uint8_t* tmp = (uint8_t*)malloc(sizeA);
             assert(tmp);
 
-            print_indexs<<<1,1>>>((uint32_t*)indexesE[0]);
+            printf("indexesE[0] after Round(175):\n"); print_indexs<<<1,1>>>((uint32_t*)indexesE[0]);
             cudaMemcpy(tmp, indexesE[0], indexesSize, cudaMemcpyDeviceToHost);
             FILE* fp = fopen(ROUND175_INDEXE_FILE, "wb");
             fwrite(tmp, 1, indexesSize, fp);
