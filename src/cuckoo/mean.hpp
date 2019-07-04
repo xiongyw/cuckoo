@@ -7,7 +7,7 @@
 // my own cycle finding is run single threaded to avoid losing cycles
 // to race conditions (typically takes under 1% of runtime)
 
-#define MEAN_VERBOSE   1
+#define MEAN_VERBOSE   0
 
 #include "cuckoo.h"
 #include "../crypto/siphashxN.h"
@@ -287,6 +287,9 @@ class edgetrimmer {
             assert(sizeof(matrix<ZBUCKETSIZE>) == NX * sizeof(yzbucket<ZBUCKETSIZE>));
             assert(sizeof(matrix<TBUCKETSIZE>) == NX * sizeof(yzbucket<TBUCKETSIZE>));
             nthreads = n_threads;
+#if 1//MEAN_VERBOSE
+            printf("n_trims=%d\n", n_trims);
+#endif
             ntrims   = n_trims;
             showall = show_all;
             buckets  = new yzbucket<ZBUCKETSIZE>[NX];
@@ -337,11 +340,13 @@ class edgetrimmer {
             rdtsc0 = __rdtsc();
             u8 const *base = (u8 *)buckets;
             indexer<ZBUCKETSIZE> dst;
+
+            /* how many bucket rows this thread is responsible: from row index `starty` to `endy`, i.e., [starty, endy) */
             const u32 starty = NY *  id    / nthreads;
             const u32   endy = NY * (id+1) / nthreads;
             u32 edge = starty << YZBITS, endedge = edge + NYZ;
             //printf("%s(id=%d): NY=%d, YZBITS=%d, NYZ=%08x\n", __FUNCTION__, id, NY, YZBITS, NYZ);
-            printf("%s(id=%d): starty=%08x, endy=%08x, edge=%08x, endedge=%08x\n", __FUNCTION__, id, starty, endy, edge, endedge);
+            printf("%s(id=%d): nthreads=%d, starty=%d, endy=%d, edge=0x%08x, endedge=0x%08x\n", __FUNCTION__, id, nthreads, starty, endy, edge, endedge);
 #if NSIPHASH == 4
             const __m128i vxmask = _mm_set1_epi64x(XMASK);
             const __m128i vyzmask = _mm_set1_epi64x(YZMASK);
@@ -1018,7 +1023,7 @@ class edgetrimmer {
                     sumsize += TRIMONV ? dst.storev(buckets, vx) : dst.storeu(buckets, vx);
                 }
                 rdtsc1 = __rdtsc();
-                if (showall || !id) printf("trimrename1 id %d round %2d size %u rdtsc: %lu maxnnid %d\n", id, round, sumsize/sizeof(u32), rdtsc1-rdtsc0, maxnnid);
+                if (showall || !id) printf("trimrename1 id %d round %2d surviving edges: %u (%.6f) rdtsc: %lu maxnnid %d\n", id, round, sumsize/sizeof(u32), sumsize/sizeof(u32)/(float)(1<<EDGEBITS), rdtsc1-rdtsc0, maxnnid);
                 assert(maxnnid < NYZ2);
                 tcounts[id] = sumsize/sizeof(u32);
             }
