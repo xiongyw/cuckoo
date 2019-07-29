@@ -12,8 +12,16 @@
 #include "../crypto/blake2.h"
 
 #define ROO_VERBOSE            1
-#define SEEDA_SINGLE_BLOCK     0   // only run one block which handles its 2^29/4096 edges
-#define ROUND0_SINGLE_BLOCK    0   // only run one block for round 0
+
+#define SEEDA_CUSTOM_BLOCK     0   // run a custom number of blocks for SeedA()
+#define SEEDA_BLOCKS          64
+
+#define ROUND0_CUSTOM_BLOCK    1   // run a custom number of blocks for Round(0)
+#define ROUND0_BLOCKS         64
+
+#define ROUNDN_CUSTOM_BLOCK    1   // run a custom number of blocks for Round(1~175)
+#define ROUNDN_BLOCKS         64
+
 #define NULL_SIPKEYS           0   // force set sipkeys to 0
 #define TEST_FLUSHA            0   // show warning when tmp[][] buffer is not big enough causing edges lost
 #define TEST_FLUSHB            0   // show warning when tmp[][] buffer is not big enough causing edges lost
@@ -23,7 +31,7 @@
 #define DUMP_SEEDA             0   // dump bucket/index content after SeedA
 #define DUMP_SEEDB             0   // dump bucket/index content after SeedB
 #define DUMP_ROUND0            0   // dump bucket/index content after Round(0)
-#define DUMP_ROUND1            0   // dump bucket/index content after Round(1)
+#define DUMP_ROUND1            1   // dump bucket/index content after Round(1)
 #define DUMP_ROUND175          0   // dump bucket/index content after Round()
 #define DUMP_TAIL              0   // dump bufferB content after Tail()
 
@@ -189,7 +197,7 @@ __global__ void SeedA(const siphash_keys &sipkeys, ulonglong4 * __restrict__ buf
     /* the column for the current block to write to */
     const int col = group % NX;
     /* edges per thread */
-#if SEEDA_SINGLE_BLOCK
+#if SEEDA_CUSTOM_BLOCK
     const int loops = 512; // assuming THREADS_HAVE_EDGES checked
 #else
     const int loops = NEDGES / nthreads; // assuming THREADS_HAVE_EDGES checked
@@ -207,7 +215,7 @@ __global__ void SeedA(const siphash_keys &sipkeys, ulonglong4 * __restrict__ buf
             u64 edge = buf[e] ^ last;  // finialize the siphash() to get the two nodes of an edge
             u32 node0 = edge & EDGEMASK;          // u
             u32 node1 = (edge >> 32) & EDGEMASK;  // v
-#if SEEDA_SINGLE_BLOCK
+#if SEEDA_CUSTOM_BLOCK
             if (node1 == 0x6a32577) printf("gotit: nonce=%d: u=0x%08x, v=%08x\n", nonce0, node0, node1);
             // print some edges to verify correctness of dipblock()
             if (gid == 0 && blk == 0 && e < EDGE_BLOCK_SIZE) {
@@ -244,7 +252,7 @@ __global__ void SeedA(const siphash_keys &sipkeys, ulonglong4 * __restrict__ buf
                 int nflush = localIdx - newCount;
                 u32 grp = row * NX + col; // bucket idx. it implies the buckets in buffer is aranged row by row.
                 int cnt = min((int)atomicAdd(indexes + grp, nflush), (int)(maxOut - nflush)); // cnt is the current index of the dst bucket
-#if SEEDA_SINGLE_BLOCK
+#if SEEDA_CUSTOM_BLOCK
                 if (grp == 0) {
                   printf("gid=%3d: cnt=0x%08x, nflush=%d, counter=%d, newCount=%d\n", gid, cnt, nflush, counters[row], newCount);
                   for (int k = 0; k < counters[row]; k ++) {
@@ -746,8 +754,8 @@ struct edgetrimmer {
 #endif
 
         cudaMemset(indexesE[1], 0, indexesSize);
-#if SEEDA_SINGLE_BLOCK
-        SeedA<EDGES_A><<<64, tp.genA.tpb>>>(*dipkeys, (ulonglong4*)bufferAB, indexesE[1]);
+#if SEEDA_CUSTOM_BLOCK
+        SeedA<EDGES_A><<<SEEDA_BLOCKS, tp.genA.tpb>>>(*dipkeys, (ulonglong4*)bufferAB, indexesE[1]);
 #else
         SeedA<EDGES_A><<<tp.genA.blocks, tp.genA.tpb>>>(*dipkeys, (ulonglong4*)bufferAB, indexesE[1]);
 #endif
@@ -835,10 +843,9 @@ struct edgetrimmer {
         const size_t qB = sizeB/NB;
         qE = NX2 / NB;
         for (u32 i = NB; i--; ) { // i = {1, 0}
-#if ROUND0_SINGLE_BLOCK
-            printf("round 0:%d\n", i);
-            Round<1, EDGES_A, EDGES_B/NB><<<2048, tp.trim.tpb>>>(0, (uint2*)(bufferA+i*qA), (uint2*)(bufferB+i*qB), indexesE[0]+i*qE, indexesE[1+i]);
-            print_indexs<<<1,1>>>((uint32_t*)indexesE[1+i]);
+#if ROUND0_CUSTOM_BLOCK
+            printf("Round(0): i=%d\n", i);
+            Round<1, EDGES_A, EDGES_B/NB><<<ROUND0_BLOCKS, tp.trim.tpb>>>(0, (uint2*)(bufferA+i*qA), (uint2*)(bufferB+i*qB), indexesE[0]+i*qE, indexesE[1+i]);
 #else
             Round<1, EDGES_A, EDGES_B/NB><<<tp.trim.blocks/NB, tp.trim.tpb>>>(0, (uint2*)(bufferA+i*qA), (uint2*)(bufferB+i*qB), indexesE[0]+i*qE, indexesE[1+i]); // to .632, then to .316
 #endif
@@ -859,17 +866,18 @@ struct edgetrimmer {
             uint8_t* tmp = (uint8_t*)malloc(indexesSize);
             assert(tmp);
 
-            printf("indexesE[1] after Round(0):\n"); print_indexs<<<1,1>>>((uint32_t*)indexesE[1]);
-            cudaMemcpy(tmp, indexesE[1], indexesSize, cudaMemcpyDeviceToHost);
-            FILE* fp = fopen(ROUND0_INDEXE1_FILE, "wb");
+            printf("indexesE[2] after Round(0):\n"); print_indexs<<<1,1>>>((uint32_t*)indexesE[2]);
+            cudaMemcpy(tmp, indexesE[2], indexesSize, cudaMemcpyDeviceToHost);
+            FILE* fp = fopen(ROUND0_INDEXE2_FILE, "wb");
             fwrite(tmp, 1, indexesSize, fp);
             fclose(fp);
 
-            printf("indexesE[2] after Round(0):\n"); print_indexs<<<1,1>>>((uint32_t*)indexesE[2]);
-            cudaMemcpy(tmp, indexesE[2], indexesSize, cudaMemcpyDeviceToHost);
-            fp = fopen(ROUND0_INDEXE2_FILE, "wb");
+            printf("indexesE[1] after Round(0):\n"); print_indexs<<<1,1>>>((uint32_t*)indexesE[1]);
+            cudaMemcpy(tmp, indexesE[1], indexesSize, cudaMemcpyDeviceToHost);
+            fp = fopen(ROUND0_INDEXE1_FILE, "wb");
             fwrite(tmp, 1, indexesSize, fp);
             fclose(fp);
+
 
             free(tmp);
         }
@@ -878,7 +886,11 @@ struct edgetrimmer {
 
         cudaMemset(indexesE[0], 0, indexesSize);
 
+#if ROUNDN_CUSTOM_BLOCK
+        Round<NB, EDGES_B/NB, EDGES_B/2><<<ROUNDN_BLOCKS, tp.trim.tpb>>>(1, (const uint2 *)bufferB, (uint2 *)bufferA, indexesE[1], indexesE[0]); // to .296
+#else
         Round<NB, EDGES_B/NB, EDGES_B/2><<<tp.trim.blocks, tp.trim.tpb>>>(1, (const uint2 *)bufferB, (uint2 *)bufferA, indexesE[1], indexesE[0]); // to .296
+#endif
         if (abort) return false;
 #if ROO_VERBOSE
         live_edges<<<1,1>>>(1, indexesE[0], indexesE[1]);
