@@ -16,10 +16,10 @@
 #define SEEDA_CUSTOM_BLOCK     0   // run a custom number of blocks for SeedA()
 #define SEEDA_BLOCKS          64
 
-#define ROUND0_CUSTOM_BLOCK    1   // run a custom number of blocks for Round(0)
+#define ROUND0_CUSTOM_BLOCK    0   // run a custom number of blocks for Round(0)
 #define ROUND0_BLOCKS         64
 
-#define ROUNDN_CUSTOM_BLOCK    1   // run a custom number of blocks for Round(1~175)
+#define ROUNDN_CUSTOM_BLOCK    0   // run a custom number of blocks for Round(1~175)
 #define ROUNDN_BLOCKS         64
 
 #define NULL_SIPKEYS           0   // force set sipkeys to 0
@@ -31,7 +31,7 @@
 #define DUMP_SEEDA             0   // dump bucket/index content after SeedA
 #define DUMP_SEEDB             0   // dump bucket/index content after SeedB
 #define DUMP_ROUND0            0   // dump bucket/index content after Round(0)
-#define DUMP_ROUND1            1   // dump bucket/index content after Round(1)
+#define DUMP_ROUND1            0   // dump bucket/index content after Round(1)
 #define DUMP_ROUND175          0   // dump bucket/index content after Round()
 #define DUMP_TAIL              0   // dump bufferB content after Tail()
 
@@ -450,10 +450,14 @@ __global__ void live_edges(int round, const u32* idx0, const u32* idx1) {
         }
         pct0 = (float)nr_edges0 / NEDGES;
         pct1 = (float)nr_edges1 / NEDGES;
-        if (round & 1) {
-            printf("After round %3d, NEDGES=%08x, nr_edges=%08x (%.6f)\n", round, NEDGES, nr_edges1, pct1);
+        if (round == 0) {
+            printf("After round %3d, NEDGES=%08x, nr_edges=%08x (%.6f)\n", round, NEDGES, (nr_edges0 + nr_edges1), pct0 + pct1);
         } else {
-            printf("After round %3d, NEDGES=%08x, nr_edges=%08x (%.6f)\n", round, NEDGES, nr_edges0, pct0);
+            if (round & 1) {
+                printf("After round %3d, NEDGES=%08x, nr_edges=%08x (%.6f)\n", round, NEDGES, nr_edges1, pct1);
+            } else {
+                printf("After round %3d, NEDGES=%08x, nr_edges=%08x (%.6f)\n", round, NEDGES, nr_edges0, pct0);
+            }
         }
     }
 }
@@ -853,9 +857,7 @@ struct edgetrimmer {
         }
 
 #if ROO_VERBOSE
-        //live_edges<<<1,1>>>(0, indexesE[0], indexesE[1]);
-        // note that the edge report from live_deges() is not correct for round 0 (the logic is a bit complex, not bother to implement that).
-        print_log("round 0 has two stages, num of edge drops to 63.2%% and 31.6%% respectively\n");
+        live_edges<<<1,1>>>(0, indexesE[1], indexesE[2]);
 #endif
 
 #if DUMP_ROUND0
