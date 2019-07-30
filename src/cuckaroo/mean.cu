@@ -443,6 +443,8 @@ __global__ void live_edges(int round, const u32* idx0, const u32* idx1) {
     u32 nr_edges1 = 0;
     float pct0 = 0., pct1 = 0.;
 
+    //if (round > 4) return;
+
     if (gid == 0) {
         for (u32 i = 0; i < NX2; i ++) {
             nr_edges0 += idx0[i];
@@ -454,9 +456,9 @@ __global__ void live_edges(int round, const u32* idx0, const u32* idx1) {
             printf("After round %3d, NEDGES=%08x, nr_edges=%08x (%.6f)\n", round, NEDGES, (nr_edges0 + nr_edges1), pct0 + pct1);
         } else {
             if (round & 1) {
-                printf("After round %3d, NEDGES=%08x, nr_edges=%08x (%.6f)\n", round, NEDGES, nr_edges1, pct1);
-            } else {
                 printf("After round %3d, NEDGES=%08x, nr_edges=%08x (%.6f)\n", round, NEDGES, nr_edges0, pct0);
+            } else {
+                printf("After round %3d, NEDGES=%08x, nr_edges=%08x (%.6f)\n", round, NEDGES, nr_edges1, pct1);
             }
         }
     }
