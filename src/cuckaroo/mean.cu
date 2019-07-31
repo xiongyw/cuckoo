@@ -452,7 +452,9 @@ __global__ void live_edges(int round, const u32* idx0, const u32* idx1) {
         }
         pct0 = (float)nr_edges0 / NEDGES;
         pct1 = (float)nr_edges1 / NEDGES;
-        if (round == -1) {
+        if (round == -2) {
+            printf("After SeedA,     nr_edges=0x%08x, NEDGES=0x%08x: ratio=%.7f\n", nr_edges1, NEDGES, pct1);
+        } else if (round == -1) {
             printf("After SeedB,     nr_edges=0x%08x, NEDGES=0x%08x: ratio=%.7f\n", nr_edges0, NEDGES, pct0);
         } else if (round == 0) {
             printf("After round %3d, nr_edges=0x%08x, NEDGES=0x%08x: ratio=%.7f\n", round, (nr_edges0 + nr_edges1), NEDGES, pct0 + pct1);
@@ -770,6 +772,10 @@ struct edgetrimmer {
         checkCudaErrors(cudaDeviceSynchronize()); cudaEventRecord(stop, NULL);
         cudaEventSynchronize(stop); cudaEventElapsedTime(&durationA, start, stop);
         if (abort) return false;
+
+#if ROO_VERBOSE
+        live_edges<<<1,1>>>(-2, indexesE[0], indexesE[1]);
+#endif
 
 #if DUMP_SEEDA
 #define BUFFAB_FILE    "SeedA-bufferAB.bin"
