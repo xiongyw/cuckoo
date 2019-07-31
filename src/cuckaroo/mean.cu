@@ -433,6 +433,8 @@ __device__ __forceinline__  bool Read2bCounter(u32 *ecounters, const int bucket)
 }
 
 #if ROO_VERBOSE
+// note: input for `idx0` and `idx1` should be `indexesE[0]` and `indexesE[1]` respectively,
+// except for Round(0), where `idx0` is `indexesE[1]`, and `idx1` is `indexesE[2]`
 __global__ void live_edges(int round, const u32* idx0, const u32* idx1) {
     const int group = blockIdx.x;
     const int dim = blockDim.x;
@@ -443,8 +445,6 @@ __global__ void live_edges(int round, const u32* idx0, const u32* idx1) {
     u32 nr_edges1 = 0;
     float pct0 = 0., pct1 = 0.;
 
-    //if (round > 4) return;
-
     if (gid == 0) {
         for (u32 i = 0; i < NX2; i ++) {
             nr_edges0 += idx0[i];
@@ -452,13 +452,15 @@ __global__ void live_edges(int round, const u32* idx0, const u32* idx1) {
         }
         pct0 = (float)nr_edges0 / NEDGES;
         pct1 = (float)nr_edges1 / NEDGES;
-        if (round == 0) {
-            printf("After round %3d, NEDGES=%08x, nr_edges=%08x (%.6f)\n", round, NEDGES, (nr_edges0 + nr_edges1), pct0 + pct1);
+        if (round == -1) {
+            printf("After SeedB,     nr_edges=0x%08x, NEDGES=0x%08x: ratio=%.7f\n", nr_edges0, NEDGES, pct0);
+        } else if (round == 0) {
+            printf("After round %3d, nr_edges=0x%08x, NEDGES=0x%08x: ratio=%.7f\n", round, (nr_edges0 + nr_edges1), NEDGES, pct0 + pct1);
         } else {
             if (round & 1) {
-                printf("After round %3d, NEDGES=%08x, nr_edges=%08x (%.6f)\n", round, NEDGES, nr_edges0, pct0);
+                printf("After round %3d, nr_edges=0x%08x, NEDGES=0x%08x: ratio=%.7f\n", round, nr_edges0, NEDGES, pct0);
             } else {
-                printf("After round %3d, NEDGES=%08x, nr_edges=%08x (%.6f)\n", round, NEDGES, nr_edges1, pct1);
+                printf("After round %3d, nr_edges=0x%08x, NEDGES=0x%08x: ratio=%.7f\n", round, nr_edges1, NEDGES, pct1);
             }
         }
     }
