@@ -1,7 +1,7 @@
 // Cuck(at)oo Cycle, a memory-hard proof-of-work
 // Copyright (c) 2013-2019 John Tromp
 
-#include "cuckaroo.hpp"
+#include "cuckarood.hpp"
 #include "graph.hpp"
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,21 +9,14 @@
 #include <unistd.h>
 #include <set>
 
-#define NNODES (2*NEDGES)
-#ifndef MAXSOLS
-#define MAXSOLS 4
-#endif
-
 typedef unsigned char u8;
 
 class cuckoo_ctx {
 public:
   siphash_keys sip_keys;
-  word_t easiness;
   graph<word_t> cg;
 
-  cuckoo_ctx(const char* header, const u32 headerlen, const u32 nonce, word_t easy_ness) : cg(NEDGES, NEDGES, MAXSOLS) {
-    easiness = easy_ness;
+  cuckoo_ctx(const char* header, const u32 headerlen, const u32 nonce) : cg(NEDGES2, NNODES1, MAX_SOLS) {
   }
 
   ~cuckoo_ctx() { }
@@ -40,20 +33,20 @@ public:
 
   void find_cycles() {
     u64 sips[EDGE_BLOCK_SIZE];
-    for (word_t block = 0; block < easiness; block += EDGE_BLOCK_SIZE) {
+    for (word_t block = 0; block < NEDGES2; block += EDGE_BLOCK_SIZE) {
       sipblock(sip_keys, block, sips);
       for (u32 i = 0; i < EDGE_BLOCK_SIZE; i++) {
         u64 edge = sips[i];
-        word_t u = edge & EDGEMASK;
-        word_t v = (edge >> 32) & EDGEMASK;
-        cg.add_edge(u, v);
+        word_t u = edge & NODE1MASK;
+        word_t v = (edge >> 32) & NODE1MASK;
+        cg.add_edge(u, v, i&1);
 #ifdef SHOW
         word_t nonce = block + i;
-        printf("%d add (%d,%d)\n", nonce,u,v+NEDGES);
-        for (unsigned j=0; j<NNODES; j++) {
+        printf("%d add (%d,%d)\n", nonce,u,v+NNODES1);
+        for (unsigned j=0; j<NNODES2; j++) {
           printf("\t%d",j);
           for (int a=cg.adjlist[j]; a!=graph<word_t>::NIL; a=cg.links[a].next) printf(":%d", cg.links[a^1].to);
-          if ((j+1)%NEDGES == 0)
+          if ((j+1) % NNODES1 == 0)
           printf("\n");
         }
 #endif
@@ -65,7 +58,7 @@ public:
       for (u32 j=0; j < PROOFSIZE; j++) {
         word_t nonce = cg.sols[s][j];
         // u64 edge = sipblock(sip_keys, nonce, sips);
-        // printf(" (%x,%x)", edge & EDGEMASK, (edge >> 32) & EDGEMASK);
+        // printf(" (%x,%x)", edge & NODE1MASK, (edge >> 32) & NODE1MASK);
         printf(" %x", nonce);
       }
       printf("\n");
@@ -91,17 +84,14 @@ public:
 int main(int argc, char **argv) {
   char header[HEADERLEN];
   memset(header, 0, HEADERLEN);
-  int c, easipct = 50;
+  int c;
   u32 nonce = 0;
   u32 range = 1;
   u64 time0, time1;
   u32 timems;
 
-  while ((c = getopt (argc, argv, "e:h:n:r:")) != -1) {
+  while ((c = getopt (argc, argv, "h:n:r:")) != -1) {
     switch (c) {
-      case 'e':
-        easipct = atoi(optarg);
-        break;
       case 'h':
         memcpy(header, optarg, strlen(optarg));
         break;
@@ -113,13 +103,11 @@ int main(int argc, char **argv) {
         break;
     }
   }
-  assert(easipct >= 0 && easipct <= 100);
-  printf("Looking for %d-cycle on cuckaroo%d(\"%s\",%d", PROOFSIZE, EDGEBITS, header, nonce);
+  printf("Looking for %d-cycle on cuckarood%d(\"%s\",%d", PROOFSIZE, EDGEBITS, header, nonce);
   if (range > 1)
     printf("-%d", nonce+range-1);
-  printf(") with %d%% edges, ", easipct);
-  word_t easiness = easipct * (uint64_t)NNODES / 100;
-  cuckoo_ctx ctx(header, sizeof(header), nonce, easiness);
+  printf("), ");
+  cuckoo_ctx ctx(header, sizeof(header), nonce);
   u64 bytes = ctx.bytes();
   int unit;
   for (unit=0; bytes >= 10240; bytes>>=10,unit++) ;

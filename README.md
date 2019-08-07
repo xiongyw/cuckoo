@@ -112,23 +112,28 @@ In support of these claims, I offer the following bounties:
 CPU Speedup Bounties
 --------------------
 $10000 for an open source implementation that finds 42-cycles twice as fast
-as lean_miner, using no more than 1 byte per edge.
+as cuckoo/slean_miner, using no more than 1 byte per edge.
+
+Wilke Trei has submitted a successful (1-1/e)-bounty claim with his slean miner at https://github.com/Lolliedieb/cuckoo
 
 $10000 for an open source implementation that finds 42-cycles twice as fast
 as mean_miner, regardless of memory use.
 
 Linear Time-Memory Trade-Off Bounty
 -----------------------------------
-$10000 for an open source implementation that uses at most N/k bits while finding 42-cycles up to 10 k times slower, for any k>=2.
+$10000 for an open source implementation that uses at most 2^N/k bits while finding 42-cycles up to 10 k times slower, for any k>=2.
 
-All of these bounties require N ranging over {2^27,2^29,2^31} and #threads
+All of these bounties require N ranging over {27,29,31} and #threads
 ranging over {1,2,4,8}, and further assume a high-end Intel Core i7 or Xeon and
 recent gcc compiler with regular flags as in my Makefile.
 
 GPU Speedup Bounty
 ------------------
 $5000 for an open source implementation for a consumer GPU
-that finds 42-cycles twice as fast as mean_miner.cu on 2^29 edge graphs on comparable hardware.
+that finds 42-cycles twice as fast as cuckoo/lean_miner.cu on 2^29 edge graphs on comparable hardware, using no more than a nibble per edge.
+
+$5000 for an open source implementation for a consumer GPU
+that finds 42-cycles twice as fast as https://github.com/mozkomor/GrinGoldMiner on 2^29 edge graphs on comparable hardware.
 
 The Makefile defines corresponding targets leancpubounty, meancpubounty, tmtobounty, and gpubounty.
 

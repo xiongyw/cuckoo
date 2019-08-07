@@ -53,6 +53,7 @@ __device__ __forceinline__ uint64_t devectorize(sip64 x) {
 
 #endif
 
+template <int rotE = 21>
 class diphash_state {
 public:
   sip64 v0;
@@ -76,7 +77,7 @@ public:
     v0 += v1; v2 += v3; v1 = rotl(v1,13);
     v3 = rotl(v3,16); v1 ^= v0; v3 ^= v2;
     v0 = rotl(v0,32); v2 += v1; v0 += v3;
-    v1 = rotl(v1,17);   v3 = rotl(v3,21);
+    v1 = rotl(v1,17);   v3 = rotl(v3,rotE);
     v1 ^= v2; v3 ^= v0; v2 = rotl(v2,32);
   }
   __device__ void hash24(const uint64_t nonce) {
@@ -88,8 +89,8 @@ public:
   }
 };
  
-__device__ uint64_t dipnode(const siphash_keys &sip_keys, const uint32_t nonce, const int uorv) {
-  diphash_state v(sip_keys);
+__device__ uint64_t dipnode(const siphash_keys &sip_keys, const uint64_t nonce, const int uorv) {
+  diphash_state<> v(sip_keys);
   v.hash24((nonce << 1) | uorv);
-  return v.xor_lanes() & EDGEMASK;
+  return v.xor_lanes() & NODE1MASK;
 }

@@ -3,7 +3,6 @@
 #include <stdint.h>    // for types uint32_t,uint64_t
 #include "portable_endian.h"    // for htole32/64
 
-
 // generalize siphash by using a quadruple of 64-bit keys,
 class siphash_keys {
 public:
@@ -13,8 +12,11 @@ public:
   uint64_t k3;
 
   void setkeys(const char *keybuf);
+
   uint64_t siphash24(const uint64_t nonce) const;
 };
+
+template <int rotE = 21>
 class siphash_state {
 public:
   uint64_t v0;
@@ -41,7 +43,7 @@ public:
     v0 += v1; v2 += v3; v1 = rotl(v1,13);
     v3 = rotl(v3,16); v1 ^= v0; v3 ^= v2;
     v0 = rotl(v0,32); v2 += v1; v0 += v3;
-    v1 = rotl(v1,17);   v3 = rotl(v3,21);
+    v1 = rotl(v1,17);   v3 = rotl(v3,rotE);
     v1 ^= v2; v3 ^= v0; v2 = rotl(v2,32);
   }
   void hash24(const uint64_t nonce) {
@@ -52,8 +54,7 @@ public:
     sip_round(); sip_round(); sip_round(); sip_round();
   }
 };
-
-#if (0)
+ 
 // set siphash keys from 32 byte char array
 void siphash_keys::setkeys(const char *keybuf) {
   k0 = htole64(((uint64_t *)keybuf)[0]);
@@ -63,11 +64,7 @@ void siphash_keys::setkeys(const char *keybuf) {
 }
 
 uint64_t siphash_keys::siphash24(const uint64_t nonce) const {
-  siphash_state v(*this);
+  siphash_state<> v(*this);
   v.hash24(nonce);
   return v.xor_lanes();
 }
-#endif
-
-
-

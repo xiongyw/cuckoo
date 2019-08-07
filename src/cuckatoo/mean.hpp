@@ -21,7 +21,7 @@
 
 // algorithm/performance parameters
 
-// EDGEBITS/NEDGES/EDGEMASK defined in cuckoo.h
+// EDGEBITS/NEDGES/NODEMASK defined in cuckoo.h
 
 // The node bits are logically split into 3 groups:
 // XBITS 'X' bits (most significant), YBITS 'Y' bits, and ZBITS 'Z' bits (least significant)
@@ -43,10 +43,6 @@
 // combined YZ values, allowing the remaining rounds to avoid the sorting on Y,
 // and directly count YZ values in a cache friendly 32KB.
 // A final pair of compression rounds remap YZ values from 15 into 11 bits.
-
-#ifndef MAXSOLS
-#define MAXSOLS 4
-#endif
 
 #ifndef XBITS
 // 7 seems to give best performance
@@ -148,6 +144,7 @@ const u32 NNONYZ        = 1 << NONYZBITS;
 
 // 1/32 reduces odds of overflowing z bucket on 2^30 nodes to 2^14*e^-32
 // (less than 1 in a billion) in theory. not so in practice (fails first at mean30 -n 1549)
+// 3/64 works well for 29, would need to be enlarged to 1/16 for EDGEBITS=27
 #ifndef BIGEPS
 #define BIGEPS 3/64
 #endif
@@ -936,7 +933,7 @@ public:
               if (renames == endrenames) {
                 endrenames += (TRIMONV ? sizeof(yzbucket<ZBUCKETSIZE>) : sizeof(zbucket<ZBUCKETSIZE>)) / sizeof(u32);
                 renames = endrenames - NZ2/2;
-                assert(renames < buckets[NX][NY].renameu1);
+                assert(renames < buckets[NX][0].renameu1);
               }
             }
             vdeg = ((vdeg-0x0102) << 1) | (vyz & 1); // preserve parity
@@ -1072,7 +1069,7 @@ public:
 
   solver_ctx(const u32 nthreads, const u32 n_trims, bool allrounds, bool show_cycle, bool mutate_nonce)
     : trimmer(nthreads, n_trims, allrounds), 
-      cg(MAXEDGES, MAXEDGES, MAXSOLS, (char *)trimmer.tbuckets) {
+      cg(MAXEDGES, MAXEDGES, MAX_SOLS, (char *)trimmer.tbuckets) {
     assert(cg.bytes() <= sizeof(yzbucket<TBUCKETSIZE>[nthreads])); // check that graph cg can fit in tbucket's memory
     showcycle = show_cycle;
     mutatenonce = mutate_nonce;
@@ -1194,7 +1191,7 @@ public:
     const u32   endy = NY * (mc->id+1) / trimmer.nthreads;
     u32 edge = starty << YZBITS, endedge = edge + NYZ;
   #if NSIPHASH == 4
-    const __m128i vnodemask = _mm_set1_epi64x(EDGEMASK);
+    const __m128i vnodemask = _mm_set1_epi64x(NODEMASK);
     siphash_keys &sip_keys = trimmer.sip_keys;
     __m128i v0, v1, v2, v3, v4, v5, v6, v7;
     const u32 e2 = 2 * edge;
@@ -1202,7 +1199,7 @@ public:
     __m128i vpacket1 = _mm_set_epi64x(e2+6, e2+4);
     const __m128i vpacketinc = _mm_set1_epi64x(8);
   #elif NSIPHASH == 8
-    const __m256i vnodemask = _mm256_set1_epi64x(EDGEMASK);
+    const __m256i vnodemask = _mm256_set1_epi64x(NODEMASK);
     const __m256i vinit = _mm256_load_si256((__m256i *)&trimmer.sip_keys);
     __m256i v0, v1, v2, v3, v4, v5, v6, v7;
     const u32 e2 = 2 * edge;

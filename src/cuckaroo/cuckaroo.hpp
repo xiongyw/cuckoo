@@ -48,6 +48,8 @@ typedef uint16_t word_t;
 #define NEDGES ((word_t)1 << EDGEBITS)
 // used to mask siphash output
 #define EDGEMASK ((word_t)NEDGES - 1)
+#define NODEMASK EDGEMASK
+#define NODE1MASK NODEMASK
 
 // Common Solver parameters, to return to caller
 struct SolverParams {
@@ -117,7 +119,7 @@ const char *errstr[] = { "OK", "wrong header length", "edge too big", "edges not
 // fills buffer with EDGE_BLOCK_SIZE siphash outputs for block containing edge in cuckaroo graph
 // return siphash output for given edge
 u64 sipblock(siphash_keys &keys, const word_t edge, u64 *buf) {
-  siphash_state shs(keys);
+  siphash_state<> shs(keys);
   word_t edge0 = edge & ~EDGE_BLOCK_MASK;
   for (u32 i=0; i < EDGE_BLOCK_SIZE; i++) {
     shs.hash24(edge0 + i);

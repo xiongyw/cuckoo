@@ -1,3 +1,13 @@
+// Cuckoo Cycle, a memory-hard proof-of-work
+// Copyright (c) 2013-2016 John Tromp
+
+#include "cuckoo.h"
+
+// assume EDGEBITS < 31
+#define NNODES (2 * NEDGES)
+#define NCUCKOO NNODES
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -5,14 +15,12 @@
 #include "cyclebase.hpp"
 #include <set>
 
-#include "cuckoo.h"
-
 typedef unsigned char u8;
 
 class cuckoo_ctx {
 public:
   siphash_keys sip_keys;
-  word_t easiness; // number of edges (micro nonces)
+  word_t easiness;
   cyclebase cb;
 
   cuckoo_ctx(const char* header, const u32 headerlen, const u32 nonce, word_t easy_ness) {
@@ -25,7 +33,7 @@ public:
     cb.freemem();
   }
 
-  uint64_t bytes() {
+  u64 bytes() {
     return (word_t)(1+NNODES) * sizeof(word_t);
   }
 
@@ -39,7 +47,6 @@ public:
     for (word_t nonce = 0; nonce < easiness; nonce++) {
       word_t u = sipnode(&sip_keys, nonce, 0);
       word_t v = sipnode(&sip_keys, nonce, 1);
-      //printf("%s(): u=%d, v=%d\n", __FUNCTION__, u, v);
   #ifdef SHOW
       for (unsigned j=1; j<NNODES; j++)
         if (!cb.cuckoo[j]) printf("%2d:   ",j);
@@ -48,6 +55,15 @@ public:
   #endif
       cb.addedge(u, v);
     }
+#ifdef CCSIZE1000
+    u32 nlarge = 0;
+    for (u32 i=0; i<NNODES; i++) {
+      int size = -cb.cuckoo[i];
+      if (size >= 1000)
+        nlarge += size;
+    }
+    printf("%u nodes in ccsize >= 1000\n", nlarge);
+#endif
   }
 };
 
@@ -58,7 +74,7 @@ int main(int argc, char **argv) {
   char header[HEADERLEN];
   memset(header, 0, HEADERLEN);
   int c, easipct = 50;
-  u32 nonce = 0;  // macro nonce
+  u32 nonce = 0;
   u32 range = 1;
   u64 time0, time1;
   u32 timems;
@@ -80,23 +96,22 @@ int main(int argc, char **argv) {
     }
   }
   assert(easipct >= 0 && easipct <= 100);
-  printf("Looking for %d-cycle on cuckoo%d(header=\"%s\",nonce=%d", PROOFSIZE, EDGEBITS+1, header, nonce);
+  printf("Looking for %d-cycle on cuckoo%d(\"%s\",%d", PROOFSIZE, EDGEBITS+1, header, nonce);
   if (range > 1)
     printf("-%d", nonce+range-1);
   printf(") with %d%% edges, ", easipct);
   word_t easiness = easipct * (word_t)NNODES / 100;
   cuckoo_ctx ctx(header, sizeof(header), nonce, easiness);
-  uint64_t bytes = ctx.bytes();
+  u64 bytes = ctx.bytes();
   int unit;
   for (unit=0; bytes >= 10240; bytes>>=10,unit++) ;
-  printf("using %d%cB memory at %llx.\n", bytes, " KMGT"[unit], (uint64_t)ctx.cb.cuckoo);
+  printf("using %d%cB memory at %llx.\n", (u32)bytes, " KMGT"[unit], (uint64_t)ctx.cb.cuckoo);
 
   for (u32 r = 0; r < range; r++) {
     time0 = timestamp();
     ctx.setheadernonce(header, sizeof(header), nonce + r);
-    printf("macro nonce %d: k0 k1 k2 k3 %llx %llx %llx %llx\n", nonce+r, ctx.sip_keys.k0, ctx.sip_keys.k1, ctx.sip_keys.k2, ctx.sip_keys.k3);
+    printf("nonce %d k0 k1 k2 k3 %llx %llx %llx %llx\n", nonce+r, ctx.sip_keys.k0, ctx.sip_keys.k1, ctx.sip_keys.k2, ctx.sip_keys.k3);
     ctx.cycle_base();
-    //ctx.cb.cycles();
     time1 = timestamp(); timems = (time1 - time0) / 1000000;
     printf("Time: %d ms\n", timems);
   }
