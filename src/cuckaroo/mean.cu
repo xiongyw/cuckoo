@@ -718,8 +718,14 @@ struct edgetrimmer {
         checkCudaErrors_V(cudaMalloc((void**)&uvnodes, PROOFSIZE * 2 * sizeof(u32)));
         checkCudaErrors_V(cudaMalloc((void**)&dipkeys, sizeof(siphash_keys)));
         for (int i = 0; i < 1+NB; i++) {
+            // NB: it seems it relies on a behavior of cudaMalloc() that the memory-blocks allocated
+            // from two consecutive calls are continuous, because indexesE[1] and indexesE[2] has
+            // to be continous as required by Round(1).
             checkCudaErrors_V(cudaMalloc((void**)&indexesE[i], indexesSize));
         }
+        printf("indexesE0=%p\n", indexesE[0]);
+        printf("indexesE1=%p\n", indexesE[1]);
+        printf("indexesE2=%p\n", indexesE[2]);
         sizeA = ROW_EDGES_A * NX * sizeof(uint2);
         sizeB = ROW_EDGES_B * NX * sizeof(uint2);
         const size_t bufferSize = sizeA + sizeB / NB;
